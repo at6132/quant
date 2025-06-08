@@ -13,6 +13,29 @@ from src.feature_engineering.join_timeframes import join_timeframes
 
 warnings.filterwarnings("ignore")
 
+def load_config(config_path: str) -> dict:
+    """
+    Load configuration from YAML file with proper encoding handling.
+    
+    Args:
+        config_path: Path to the YAML configuration file
+        
+    Returns:
+        Configuration dictionary
+    """
+    encodings = ['utf-8', 'utf-8-sig', 'latin1', 'cp1252']
+    
+    for encoding in encodings:
+        try:
+            with open(config_path, 'r', encoding=encoding) as f:
+                return yaml.safe_load(f)
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            raise Exception(f"Error reading config file: {str(e)}")
+    
+    raise Exception(f"Could not read config file with any of the attempted encodings: {encodings}")
+
 def main(cfg):
     # Set up logging
     logger = setup_logging()
@@ -73,7 +96,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     try:
-        cfg = yaml.safe_load(open(args.config))
+        cfg = load_config(args.config)
         main(cfg)
     except Exception as e:
         print(f"Error: {str(e)}")
