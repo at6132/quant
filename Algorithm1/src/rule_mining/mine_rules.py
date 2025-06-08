@@ -5,6 +5,9 @@ import logging
 from itertools import combinations
 from sklearn.metrics import precision_score, recall_score
 import json
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -13,94 +16,112 @@ def find_indicator_columns(df: pd.DataFrame) -> List[str]:
     indicator_keywords = ['break', 'cross', 'signal', 'alert', 'pattern', 'bos', 'smc']
     return [col for col in df.columns if any(keyword in col.lower() for keyword in indicator_keywords)]
 
-def evaluate_rule(df: pd.DataFrame, indicators: List[str], min_precision: float = 0.7, min_recall: float = 0.1) -> Dict:
-    """
-    Evaluate a combination of indicators as a potential rule.
+def evaluate_rule(df: pd.DataFrame, indicators: List[str], label_col: str, 
+                 min_precision: float, min_recall: float) -> Dict:
+    """Evaluate a single rule combination."""
+    # Create rule signal using vectorized operations
+    signal = pd.Series(True, index=df.index)
+    for ind in indicators:
+        # Handle both numeric and string indicators
+        if pd.api.types.is_numeric_dtype(df[ind]):
+            signal &= (df[ind] > 0)
+        else:
+            # For string indicators, check if they're non-empty
+            signal &= (df[ind].notna() & (df[ind] != ''))
     
-    Args:
-        df: DataFrame with indicator columns and labels
-        indicators: List of indicator column names to evaluate
-        min_precision: Minimum precision required for a valid rule
-        min_recall: Minimum recall required for a valid rule
-        
-    Returns:
-        Dictionary with rule details if valid, None otherwise
-    """
-    # Create rule signal (all indicators must be True)
-    rule_signal = df[indicators].all(axis=1)
+    # Skip if too few signals
+    signal_sum = signal.sum()
+    if signal_sum < 10:  # Minimum 10 signals to consider
+        return None
     
-    # Calculate metrics
-    precision = precision_score(df['label'] != 0, rule_signal)
-    recall = recall_score(df['label'] != 0, rule_signal)
+    # Calculate metrics using vectorized operations
+    true_positives = (df[label_col] & signal).sum()
+    precision = true_positives / signal_sum
+    recall = true_positives / df[label_col].sum()
     
+    # Check if rule meets minimum criteria
     if precision >= min_precision and recall >= min_recall:
-        # Calculate additional statistics
-        rule_df = df[rule_signal]
-        success_rate = (rule_df['label'] != 0).mean()
-        avg_move = rule_df['move_size'].mean()
-        avg_time = rule_df['time_to_move'].mean()
-        
         return {
             'indicators': indicators,
-            'precision': float(precision),
+            'precision': float(precision),  # Convert to float for JSON serialization
             'recall': float(recall),
-            'success_rate': float(success_rate),
-            'avg_move_size': float(avg_move),
-            'avg_time_to_move': float(avg_time),
-            'signal_count': int(rule_signal.sum())
+            'support': float(signal_sum / len(df))
         }
-    
     return None
 
-def mine_rules(df: pd.DataFrame, cfg: dict) -> List[Dict]:
-    """
-    Mine indicator combinations that precede large price moves.
-    
-    Args:
-        df: DataFrame with indicator columns and labels
-        cfg: Configuration dictionary with rule mining parameters
-        
-    Returns:
-        List of valid rules with their statistics
-    """
+def mine_rules(df: pd.DataFrame, config: Dict) -> List[Dict]:
+    """Mine trading rules from the data."""
     logger.info("Mining rules...")
     
     # Get parameters from config
-    min_precision = cfg['rule_mining']['min_precision']
-    min_recall = cfg['rule_mining']['min_recall']
-    max_indicators = cfg['rule_mining']['max_indicators']
+    min_precision = config['rule_mining']['min_precision']
+    min_recall = config['rule_mining']['min_recall']
+    max_indicators = config['rule_mining']['max_indicators']
+    label_col = 'label'  # Assuming binary classification label
     
-    # Find indicator columns
-    indicator_cols = find_indicator_columns(df)
-    logger.info(f"Found {len(indicator_cols)} potential indicator columns")
+    # Get all indicator columns and their types
+    indicator_cols = [col for col in df.columns 
+                     if col not in ['open', 'high', 'low', 'close', 'label']]
+    logger.info(f"Found {len(indicator_cols)} indicator columns")
+    
+    # Log column types for debugging
+    for col in indicator_cols[:5]:  # Log first 5 columns
+        logger.info(f"Column {col} type: {df[col].dtype}")
     
     # Initialize results
-    valid_rules = []
+    rules = []
+    max_rules = 100  # Limit total number of rules
     
-    # Try combinations of 2 to max_indicators
-    for n in range(2, min(max_indicators + 1, len(indicator_cols) + 1)):
+    # Try different numbers of indicators
+    for n in range(2, max_indicators + 1):
+        if len(rules) >= max_rules:
+            logger.info(f"Reached maximum number of rules ({max_rules})")
+            break
+            
         logger.info(f"Trying combinations of {n} indicators...")
         
-        for combo in combinations(indicator_cols, n):
-            rule = evaluate_rule(df, list(combo), min_precision, min_recall)
-            if rule:
-                valid_rules.append(rule)
+        # Use ProcessPoolExecutor for parallel processing
+        n_cores = max(1, multiprocessing.cpu_count() - 1)
+        
+        # Process in smaller chunks
+        chunk_size = 100  # Process 100 combinations at a time
+        total_combs = len(list(combinations(indicator_cols, n)))
+        
+        with ProcessPoolExecutor(max_workers=n_cores) as executor:
+            # Process combinations in chunks
+            for i in range(0, total_combs, chunk_size):
+                # Get chunk of combinations
+                chunk_combs = list(combinations(indicator_cols, n))[i:i + chunk_size]
+                
+                # Submit chunk for processing
+                futures = []
+                for indicators in chunk_combs:
+                    futures.append(
+                        executor.submit(evaluate_rule, df, list(indicators), 
+                                     label_col, min_precision, min_recall)
+                    )
+                
+                # Collect results with progress bar
+                for future in tqdm(futures, total=len(futures), 
+                                 desc=f"Testing {n}-indicator rules ({i}/{total_combs})"):
+                    result = future.result()
+                    if result is not None:
+                        rules.append(result)
+                        if len(rules) >= max_rules:
+                            break
+                
+                if len(rules) >= max_rules:
+                    break
     
     # Sort rules by precision * recall
-    valid_rules.sort(key=lambda x: x['precision'] * x['recall'], reverse=True)
+    rules.sort(key=lambda x: x['precision'] * x['recall'], reverse=True)
     
     # Log results
-    logger.info(f"\nFound {len(valid_rules)} valid rules")
-    if valid_rules:
-        logger.info("\nTop 5 rules:")
-        for i, rule in enumerate(valid_rules[:5], 1):
-            logger.info(f"\nRule {i}:")
-            logger.info(f"Indicators: {', '.join(rule['indicators'])}")
-            logger.info(f"Precision: {rule['precision']:.3f}")
-            logger.info(f"Recall: {rule['recall']:.3f}")
-            logger.info(f"Success Rate: {rule['success_rate']:.3f}")
-            logger.info(f"Avg Move Size: ${rule['avg_move_size']:.2f}")
-            logger.info(f"Avg Time to Move: {rule['avg_time_to_move']:.2f} minutes")
-            logger.info(f"Signal Count: {rule['signal_count']}")
+    logger.info(f"Found {len(rules)} valid rules")
+    if rules:
+        logger.info("Top 5 rules:")
+        for i, rule in enumerate(rules[:5], 1):
+            logger.info(f"{i}. Indicators: {rule['indicators']}")
+            logger.info(f"   Precision: {rule['precision']:.3f}, Recall: {rule['recall']:.3f}")
     
-    return valid_rules 
+    return rules 

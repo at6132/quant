@@ -10,9 +10,13 @@ import numpy as np
 from sklearn.model_selection import TimeSeriesSplit
 import optuna
 from typing import Dict, List, Tuple
+import traceback
 
 # Import our modules
-from src.utils.logging_config import setup_logging
+from src.utils.logging_config import (
+    setup_logging, log_config, log_memory_usage,
+    log_system_info, log_pipeline_metrics, save_log_metadata
+)
 from src.ingestion.load_multitf import load_all_frames, validate_frames
 from src.cleaning.standardise_columns import standardize_frames
 from src.cleaning.fill_gaps import fill_gaps_in_frames
@@ -21,10 +25,9 @@ from src.feature_engineering.join_timeframes import join_timeframes
 from src.feature_engineering.engineer_features import engineer_features
 from src.labeling.generate_labels import generate_labels
 from src.rule_mining.mine_rules import mine_rules
-from src.models.train_lgbm import train_lgbm_model
-from src.models.train_tft import train_tft_model
-from src.backtesting.walk_forward import run_walk_forward
-from src.visualization.plot_results import plot_results
+from src.models.train_models import train_models
+from src.backtesting.backtest import backtest
+from src.utils.save_results import save_results
 
 warnings.filterwarnings("ignore")
 
@@ -61,136 +64,78 @@ def ensure_directories():
     for dir_name in dirs:
         Path(dir_name).mkdir(exist_ok=True)
 
-def save_pipeline_metadata(cfg: dict, start_time: datetime):
+def save_pipeline_metadata(cfg: dict, start_time: datetime, metrics: dict):
     """Save pipeline metadata including config and timing."""
     metadata = {
         'config': cfg,
         'start_time': start_time.isoformat(),
         'end_time': datetime.now().isoformat(),
-        'duration_seconds': (datetime.now() - start_time).total_seconds()
+        'duration_seconds': (datetime.now() - start_time).total_seconds(),
+        'metrics': metrics
     }
     
     with open('artefacts/pipeline_metadata.json', 'w') as f:
         json.dump(metadata, f, indent=2)
 
-def main(cfg):
-    # Set up logging
-    logger = setup_logging()
-    logger.info("Configuration loaded: %s", cfg)
-    
-    # Create necessary directories
-    ensure_directories()
-    
-    # Record start time
-    start_time = datetime.now()
+def main(cfg: Dict):
+    """Main pipeline function."""
+    # Set up logging first
+    logger = setup_logging(cfg)
     
     try:
-        # 1️⃣ Load & unify
-        logger.info("Step 1: Loading data files...")
-        start_time = time.time()
-        raw = load_all_frames(cfg)
-        validate_frames(raw)
-        logger.info(f"Data loading completed in {time.time() - start_time:.2f} seconds")
+        logger.info("Starting pipeline...")
         
-        # 2️⃣ Clean & standardize
-        logger.info("Step 2: Cleaning and standardizing data...")
-        start_time = time.time()
-        standardized = standardize_frames(raw)
-        logger.info(f"Column standardization completed in {time.time() - start_time:.2f} seconds")
+        # Log system info
+        log_system_info(logger)
         
-        # 3️⃣ Fill gaps
-        logger.info("Step 3: Filling data gaps...")
-        start_time = time.time()
-        filled = fill_gaps_in_frames(standardized, cfg['price_cols'])
-        logger.info(f"Gap filling completed in {time.time() - start_time:.2f} seconds")
+        # Step 1: Load data
+        logger.info("\nStep 1: Loading data...")
+        data = load_all_frames(cfg)
         
-        # 4️⃣ Remove high-NaN columns
-        logger.info("Step 4: Removing high-NaN columns...")
-        start_time = time.time()
-        cleaned = drop_nan_columns_in_frames(filled)
-        logger.info(f"NaN column removal completed in {time.time() - start_time:.2f} seconds")
+        # Step 2: Join timeframes
+        logger.info("\nStep 2: Joining timeframes...")
+        joined = join_timeframes(data)
         
-        # 5️⃣ Join timeframes
-        logger.info("Step 5: Joining timeframes...")
-        start_time = time.time()
-        joined = join_timeframes(cleaned, base_tf='15Second', lookback=True)
-        logger.info(f"Timeframe joining completed in {time.time() - start_time:.2f} seconds")
+        # Step 3: Engineer features
+        logger.info("\nStep 3: Engineering features...")
+        features = engineer_features(joined, cfg)
         
-        # 6️⃣ Engineer features
-        logger.info("Step 6: Engineering features...")
-        start_time = time.time()
-        features = engineer_features(joined)
-        logger.info(f"Feature engineering completed in {time.time() - start_time:.2f} seconds")
+        # Step 4: Generate labels
+        logger.info("\nStep 4: Generating labels...")
+        labeled_data = generate_labels(features, cfg)
         
-        # 7️⃣ Generate labels
-        logger.info("Step 7: Generating labels...")
-        start_time = time.time()
-        labeled = generate_labels(features, cfg)
-        logger.info(f"Label generation completed in {time.time() - start_time:.2f} seconds")
+        # Step 5: Mine rules
+        logger.info("\nStep 5: Mining rules...")
+        rules = mine_rules(labeled_data, cfg)
         
-        # Save feature matrix
-        logger.info("Saving feature matrix...")
-        labeled.to_parquet("artefacts/feature_matrix.parquet")
+        # Step 6: Train models
+        logger.info("\nStep 6: Training models...")
+        models = train_models(labeled_data, cfg)
         
-        # 8️⃣ Mine rules
-        logger.info("Step 8: Mining rules...")
-        start_time = time.time()
-        rules = mine_rules(labeled, cfg)
-        logger.info(f"Rule mining completed in {time.time() - start_time:.2f} seconds")
+        # Step 7: Backtest
+        logger.info("\nStep 7: Running backtest...")
+        results = backtest(labeled_data, models, rules, cfg)
         
-        # Save rules
-        with open("artefacts/rules.json", 'w') as f:
-            json.dump(rules, f, indent=2)
+        # Step 8: Save results
+        logger.info("\nStep 8: Saving results...")
+        save_results(results, cfg)
         
-        # 9️⃣ Train models
-        logger.info("Step 9: Training models...")
-        start_time = time.time()
-        
-        # Train LightGBM
-        lgbm_model = train_lgbm_model(labeled, cfg)
-        lgbm_model.save_model("models/lgbm_model.txt")
-        
-        # Train TFT
-        tft_model = train_tft_model(labeled, cfg)
-        tft_model.save("models/tft_model.ckpt")
-        
-        logger.info(f"Model training completed in {time.time() - start_time:.2f} seconds")
-        
-        # 🔟 Run walk-forward backtest
-        logger.info("Step 10: Running walk-forward backtest...")
-        start_time = time.time()
-        results = run_walk_forward(labeled, rules, lgbm_model, tft_model, cfg)
-        logger.info(f"Backtesting completed in {time.time() - start_time:.2f} seconds")
-        
-        # Save results
-        with open("artefacts/backtest_results.json", 'w') as f:
-            json.dump(results, f, indent=2)
-        
-        # Plot results
-        logger.info("Generating plots...")
-        plot_results(results, "results")
-        
-        # Save pipeline metadata
-        save_pipeline_metadata(cfg, start_time)
-        
-        logger.info("\nPipeline Summary:")
-        logger.info(f"Total rows processed: {len(labeled)}")
-        logger.info(f"Total features: {len(labeled.columns)}")
-        logger.info(f"Rules found: {len(rules)}")
-        logger.info(f"Results saved to artefacts/ and results/ directories")
+        logger.info("\nPipeline completed successfully!")
         
     except Exception as e:
-        logger.error("Error in main pipeline: %s", str(e), exc_info=True)
+        logger.error(f"Error in main pipeline: {str(e)}")
+        logger.error(traceback.format_exc())
         raise
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config", default="config.yaml")
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Run the trading pipeline')
+    parser.add_argument('-c', '--config', required=True, help='Path to config file')
     args = parser.parse_args()
     
-    try:
-        cfg = load_config(args.config)
-        main(cfg)
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        raise
+    # Load config
+    with open(args.config, 'r') as f:
+        cfg = yaml.safe_load(f)
+    
+    # Run pipeline
+    main(cfg)

@@ -1,0 +1,45 @@
+# Data parameters
+data_dir: "../processed_data"  # Point to the processed_data directory
+price_cols: ["open", "high", "low", "close"]
+timeframes: ["15Second", "1minute", "15minute", "1hour", "4hours"]  # Match the actual file names
+
+# Feature engineering parameters
+feature_engineering:
+  rolling_windows: [5, 10, 20, 50, 100]  # Number of bars for rolling calculations
+  cross_indicator_pairs:
+    - ["rsi", "macd"]
+    - ["bb_upper", "bb_lower"]
+    - ["ema_20", "sma_50"]
+  time_features: true  # Add time-based features
+
+# Labeling parameters
+label:
+  horizon_minutes: 15  # Look ahead window for label generation
+  dollar_threshold: 250  # Minimum price move to consider
+
+# Rule mining parameters
+rule_mining:
+  min_precision: 0.7  # Minimum precision for valid rules
+  min_recall: 0.1  # Minimum recall for valid rules
+  max_indicators: 3  # Maximum number of indicators in a rule
+
+# Model parameters
+models:
+  lgbm:
+    n_trials: 50  # Number of hyperparameter optimization trials
+    early_stopping_rounds: 50
+    num_boost_round: 1000
+  
+  tft:
+    n_trials: 20  # Number of hyperparameter optimization trials
+    encoder_length: 100  # Number of past bars to use
+    max_epochs: 100
+    batch_size: 64
+
+# Backtesting parameters
+backtesting:
+  n_splits: 5  # Number of walk-forward splits
+  initial_capital: 100000  # Initial capital for PnL calculation
+
+# Logging parameters
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL 
