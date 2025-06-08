@@ -212,4 +212,4 @@ The system processes data in chunks to manage memory efficiently and includes:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under JT Capital LLC. All rights reserved.
