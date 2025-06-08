@@ -28,7 +28,11 @@ def load_config(config_path: str) -> dict:
     for encoding in encodings:
         try:
             with open(config_path, 'r', encoding=encoding) as f:
-                return yaml.safe_load(f)
+                cfg = yaml.safe_load(f)
+                # Convert relative paths to absolute
+                if 'data_dir' in cfg:
+                    cfg['data_dir'] = str(Path(config_path).parent / cfg['data_dir'])
+                return cfg
         except UnicodeDecodeError:
             continue
         except Exception as e:

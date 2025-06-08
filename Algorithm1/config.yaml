@@ -1,9 +1,9 @@
 # paths
-data_dir: processed_data               # where your parquet files live
+data_dir: ../processed_data               # where your parquet files live
 timeframes: ["15Second", "1minute", "15minute", "1hour", "4hours"]
 price_cols: [open, high, low, close, volume]
 
-# label: “±$500 in next N minutes”
+# label: "±$500 in next N minutes"
 label:
   horizon_minutes: 60
   dollar_threshold: 500
