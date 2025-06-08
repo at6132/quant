@@ -4,32 +4,76 @@ from datetime import datetime
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
-from Core.indicators.breaker_signals import breaker_signals, BreakerEngine, EVENTS
-from Core.indicators.liquidity_swings import liquidity_swings
-from Core.indicators.tr_reality_core import tr_reality
-from Core.indicators.smc_core import process_candles as smc_process
-from Core.indicators.pvsra_vs import pvsra_vs
-from Core.indicators.IT_Foundation import process as it_foundation_process
-from Core.indicators.sessions import build_session_table
-from Core.indicators.ict_sm_trades import run as ict_sm_trades_run
-from Core.indicators.bb_ob_engine import process_candles as bb_process
 import gc
 import psutil
 import logging
 import time
 import traceback
 import json
+from pathlib import Path
 
-# Set up logging
+# ────────────────────────────────────────────────────────────────
+#  In-house libs
+# ────────────────────────────────────────────────────────────────
+from Core.indicators.breaker_signals   import breaker_signals, BreakerEngine, EVENTS
+from Core.indicators.liquidity_swings  import liquidity_swings
+from Core.indicators.tr_reality_core   import tr_reality
+from Core.indicators.smc_core          import process_candles   as smc_process
+from Core.indicators.pvsra_vs          import pvsra_vs
+from Core.indicators.sessions          import build_session_table
+from Core.indicators.ict_sm_trades     import run               as ict_sm_trades_run
+from Core.indicators.bb_ob_engine      import process_candles   as bb_process
+from Core.indicators.IT_Foundation     import process           as it_foundation_process
+
+# ────────────────────────────────────────────────────────────────
+#  Logging
+# ────────────────────────────────────────────────────────────────
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level = logging.INFO,
+    format = "%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(f'process_indicators_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
+
+def _safe_join(base: pd.DataFrame,
+               new: pd.DataFrame | None,
+               prefix: str = "") -> pd.DataFrame:
+    """
+    Joins *new* onto *base* only if *new* is a non-empty DataFrame.
+    """
+    if new is None:
+        return base
+
+    # Handle generator output
+    if hasattr(new, '__iter__') and not isinstance(new, pd.DataFrame):
+        new = pd.DataFrame(list(new))
+
+    if new.empty:
+        return base
+
+    if prefix:
+        new = new.add_prefix(prefix)
+
+    # Re-index to the base index once, fill forward if indicator is lower tf
+    new = new.reindex(base.index, method="ffill")
+    return base.join(new)
+
+def _safe_run(fn, name: str, *args, **kwargs):
+    """
+    Wrap an indicator call so that a hard failure does not kill the run.
+    """
+    try:
+        out = fn(*args, **kwargs)
+        # Handle generator output
+        if hasattr(out, '__iter__') and not isinstance(out, pd.DataFrame):
+            out = pd.DataFrame(list(out))
+        return out
+    except Exception as e:
+        logger.warning("Indicator %s failed: %s", name, e, exc_info=True)
+        return None
 
 def get_chunk_size(df_size):
     """Calculate appropriate chunk size based on available memory"""
@@ -202,25 +246,24 @@ def process_chunk(chunk_df, start_idx, full_df):
             logger.info(f"Processing Breaker Signals")
             # Ensure required columns exist and are float type
             breaker_df = chunk_df[['open', 'high', 'low', 'close']].copy()
-            breaker_df['open'] = breaker_df['open'].astype(float)
-            breaker_df['high'] = breaker_df['high'].astype(float)
-            breaker_df['low'] = breaker_df['low'].astype(float)
-            breaker_df['close'] = breaker_df['close'].astype(float)
+            breaker_df = breaker_df.astype(float)
             
-            # Process each bar individually
-            eng = BreakerEngine()
-            out = np.zeros((len(breaker_df), 22), dtype=bool)
-            
-            # Convert to numpy arrays for efficient access
+            # Convert to numpy arrays for breaker signals
             o = breaker_df['open'].values
             h = breaker_df['high'].values
             l = breaker_df['low'].values
             c = breaker_df['close'].values
             
+            # Create a new instance of BreakerEngine with default parameters
+            eng = BreakerEngine()
+            out = np.zeros((len(breaker_df), 22), dtype=bool)
+            
+            # Process each bar
             for i in range(len(breaker_df)):
-                fired = eng.on_bar(i, o, h, l, c)
+                fired = eng.on_bar(i, o, h, l, c)  # Pass the full arrays
                 out[i] = fired
-                
+            
+            # Create the result DataFrame with the original datetime index
             breaker_result = pd.DataFrame(out, index=breaker_df.index, columns=EVENTS)
             if not breaker_result.empty:
                 logger.info(f"Breaker Signals added columns: {breaker_result.columns.tolist()}")
@@ -233,7 +276,6 @@ def process_chunk(chunk_df, start_idx, full_df):
         try:
             # 5. Process Liquidity Swings
             logger.info(f"Processing Liquidity Swings")
-            # Ensure required columns exist
             liq_df = chunk_df[['open', 'high', 'low', 'close', 'volume']].copy()
             liq_result = liquidity_swings(liq_df)
             if not liq_result.empty:
@@ -247,13 +289,12 @@ def process_chunk(chunk_df, start_idx, full_df):
         try:
             # 6. Process SMC Core
             logger.info(f"Processing SMC Core")
-            # Ensure required columns exist and time is in milliseconds
             smc_df = chunk_df[['open', 'high', 'low', 'close']].copy()
             smc_df['time'] = smc_df.index.astype(np.int64) // 10**6  # Convert to milliseconds
-            smc_df = smc_df.reset_index(drop=True)  # Reset index to integer
+            smc_df = smc_df.reset_index(drop=True)  # Reset to integer index
             smc_result = list(smc_process(smc_df))
             if smc_result:
-                smc_df = pd.DataFrame(smc_result)
+                smc_df = pd.DataFrame(smc_result, index=chunk_df.index)  # Set back to datetime index
                 logger.info(f"SMC Core added columns: {smc_df.columns.tolist()}")
                 smc_df = smc_df.add_prefix('smc_')
                 result_df = pd.concat([result_df, smc_df], axis=1)
@@ -262,10 +303,9 @@ def process_chunk(chunk_df, start_idx, full_df):
             logger.error(f"SMC Core error: {str(e)}")
             
         try:
-            # 8. Process TR Reality Core
+            # 7. Process TR Reality Core
             logger.info(f"Processing TR Reality Core")
-            # Ensure required columns exist and time is in milliseconds
-            tr_df = chunk_df[['open', 'high', 'low', 'close', 'volume']].copy()  # Added volume
+            tr_df = chunk_df[['open', 'high', 'low', 'close', 'volume']].copy()
             tr_df['time'] = tr_df.index.astype(np.int64) // 10**6  # Convert to milliseconds
             tr_result = tr_reality(tr_df)
             if not tr_result.empty:
@@ -277,29 +317,16 @@ def process_chunk(chunk_df, start_idx, full_df):
             logger.error(f"TR Reality Core error: {str(e)}")
             
         try:
-            # 9. Process BB OB Engine
+            # 8. Process BB OB Engine
             logger.info(f"Processing BB OB Engine")
-            # Process in chunks of 1000 bars
-            chunk_size = 1000
-            total_chunks = (len(chunk_df) + chunk_size - 1) // chunk_size
-            print(f"\nProcessing BB OB Engine in {total_chunks} chunks...")
-            
-            bb_results = []
-            for i in range(0, len(chunk_df), chunk_size):
-                chunk_num = (i // chunk_size) + 1
-                print(f"Processing chunk {chunk_num}/{total_chunks} ({i} to {min(i+chunk_size, len(chunk_df))} bars)")
-                chunk = chunk_df.iloc[i:i+chunk_size]
-                chunk_results = list(bb_process(chunk))
-                bb_results.extend(chunk_results)
-                print(f"Chunk {chunk_num} complete - {len(chunk_results)} results")
-            
-            if bb_results:
-                print(f"\nConverting {len(bb_results)} results to DataFrame...")
-                bb_df = pd.DataFrame(bb_results)
+            bb_df = chunk_df.copy()
+            bb_df = bb_df.reset_index(drop=True)  # Reset to integer index
+            bb_result = list(bb_process(bb_df))
+            if bb_result:
+                bb_df = pd.DataFrame(bb_result, index=chunk_df.index)  # Set back to datetime index
                 logger.info(f"BB OB Engine added columns: {bb_df.columns.tolist()}")
                 bb_df = bb_df.add_prefix('bb_')
                 result_df = pd.concat([result_df, bb_df], axis=1)
-                print("BB OB Engine processing complete!")
         except Exception as e:
             errors.append(f"Error in BB OB Engine: {str(e)}")
             logger.error(f"BB OB Engine error: {str(e)}")
