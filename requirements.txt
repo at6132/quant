@@ -1,0 +1,8 @@
+websocket-client>=1.6.4
+pandas>=2.1.0
+numpy>=1.24.0
+python-dateutil>=2.8.2
+pytz>=2023.3 
+requests
+tqdm
+psutil
