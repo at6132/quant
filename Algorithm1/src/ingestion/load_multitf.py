@@ -1,6 +1,6 @@
 import pandas as pd
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,37 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [col.lower() for col in df.columns]
     return df
+
+def extract_base_columns(df: pd.DataFrame, required_cols: List[str]) -> pd.DataFrame:
+    """
+    Extract base price columns from prefixed columns.
+    For example, if we have 'pvsra_open', 'pvsra_high', etc., we'll use those as our base columns.
+    
+    Args:
+        df: Input DataFrame with prefixed columns
+        required_cols: List of required base column names
+        
+    Returns:
+        DataFrame with base columns extracted
+    """
+    # Find the first occurrence of each required column with any prefix
+    base_cols = {}
+    for req_col in required_cols:
+        # Look for columns ending with the required name
+        matches = [col for col in df.columns if col.endswith(f"_{req_col}")]
+        if matches:
+            # Use the first match
+            base_cols[req_col] = matches[0]
+            logger.info(f"Using {matches[0]} as base column for {req_col}")
+        else:
+            raise ValueError(f"Could not find any column ending with _{req_col}")
+    
+    # Create new DataFrame with base columns
+    result = pd.DataFrame(index=df.index)
+    for base_name, prefixed_name in base_cols.items():
+        result[base_name] = df[prefixed_name]
+    
+    return result
 
 def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
     """
@@ -43,6 +74,14 @@ def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
         
         # Normalize column names to lowercase
         df = normalize_column_names(df)
+        
+        # Extract base price columns
+        try:
+            base_df = extract_base_columns(df, cfg['price_cols'])
+            df = pd.concat([base_df, df], axis=1)
+        except ValueError as e:
+            logger.error(f"Available columns in {tf}: {df.columns.tolist()}")
+            raise
         
         # Ensure datetime index
         if not isinstance(df.index, pd.DatetimeIndex):
