@@ -5,6 +5,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize column names to lowercase.
+    
+    Args:
+        df: Input DataFrame
+        
+    Returns:
+        DataFrame with normalized column names
+    """
+    df = df.copy()
+    df.columns = [col.lower() for col in df.columns]
+    return df
+
 def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
     """
     Load all timeframe parquet files and ensure they have proper UTC timestamps.
@@ -27,6 +41,9 @@ def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
         logger.info(f"Loading {tf} data...")
         df = pd.read_parquet(file_path)
         
+        # Normalize column names to lowercase
+        df = normalize_column_names(df)
+        
         # Ensure datetime index
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
@@ -37,10 +54,11 @@ def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
         elif df.index.tz != 'UTC':
             df.index = df.index.tz_convert('UTC')
             
-        # Validate required columns
-        required_cols = cfg['price_cols']
+        # Validate required columns (case-insensitive)
+        required_cols = [col.lower() for col in cfg['price_cols']]
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
+            logger.error(f"Available columns in {tf}: {df.columns.tolist()}")
             raise ValueError(f"Missing required columns in {tf}: {missing_cols}")
             
         frames[tf] = df
