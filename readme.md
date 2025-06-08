@@ -2,49 +2,30 @@
 
 A comprehensive trading system that processes market data and generates trading signals using various technical analysis strategies.
 
-## Project Structure
+## Quick Start
 
-### Core Components
+1. Get the data:
+   ```bash
+   python download_btc_15s.py
+   ```
+   This will download the last 7 days of BTCUSDT data from Binance and create:
+   - `BTCUSDT_1s_last7days.csv` (raw 1-second data)
+   - `BTCUSDT_15s_last7days.csv` (aggregated 15-second data)
 
-- `process_indicators.py`: Main script for processing market data and generating indicators
-- `Core/indicators/`: Directory containing all indicator implementations
-  - `bb_ob_engine.py`: Bollinger Bands Order Block Engine for detecting potential reversal zones
-  - `breaker_signals.py`: Breaker block detection and signal generation
-  - `ict_sm_trades.py`: ICT Smart Money Concepts trading signals
-  - `liquidity_swings.py`: Liquidity swing detection and analysis
-  - `pvsra.py`: Price Volume Supply Demand Analysis
-  - `sessions.py`: Trading session detection and analysis
-  - `smc_core.py`: Smart Money Concepts core analysis
-  - `tr_reality_core.py`: Trend Reality Core analysis
+2. Process the data with indicators:
+   ```bash
+   python process_indicators.py
+   ```
+   This will create a `processed_data` directory containing parquet files for multiple timeframes:
+   - 15Second.parquet
+   - 1minute.parquet
+   - 15minute.parquet
+   - 1hour.parquet
+   - 4hours.parquet
 
-### Data Processing
+Each parquet file contains the original price data plus all the indicators described below.
 
-- `processed_data/`: Directory containing processed data files
-  - `15Second.parquet`: 15-second timeframe processed data
-  - `1Minute.parquet`: 1-minute timeframe processed data
-  - `5Minute.parquet`: 5-minute timeframe processed data
-  - `15Minute.parquet`: 15-minute timeframe processed data
-  - `1Hour.parquet`: 1-hour timeframe processed data
-  - `4Hour.parquet`: 4-hour timeframe processed data
-  - `1Day.parquet`: Daily timeframe processed data
-
-## Data Requirements
-
-### Input Data Format
-The system expects a CSV file (`btcusdt_15s.csv`) with the following columns:
-- Timestamp (index)
-- Open
-- High
-- Low
-- Close
-- Volume
-
-### Data Sources
-1. Binance API (recommended)
-2. Custom data providers
-3. Historical data downloads
-
-## Strategies
+## Available Indicators
 
 ### 1. Bollinger Bands Order Block Engine
 - Detects potential reversal zones using Bollinger Bands
@@ -86,33 +67,13 @@ The system expects a CSV file (`btcusdt_15s.csv`) with the following columns:
 - Identifies trend continuation and reversal patterns
 - Generates signals based on trend analysis
 
-## Usage
+## Data Processing Details
 
-1. Prepare your data:
-   ```bash
-   # Place your btcusdt_15s.csv file in the project root
-   ```
-
-2. Run the processing script:
-   ```bash
-   python process_indicators.py
-   ```
-
-3. Access processed data:
-   - Processed data will be saved in the `processed_data/` directory
-   - Each timeframe will have its own parquet file
-   - Use pandas to read the parquet files for analysis
-
-## Output Data
-
-The processed data includes:
-- Original price data
-- Technical indicators
-- Trading signals
-- Session information
-- Order block detection
-- Liquidity analysis
-- Trend analysis
+The system processes data in chunks to manage memory efficiently and includes:
+- Automatic timezone handling (all timestamps in UTC)
+- Memory optimization (float32 data types)
+- Error handling and logging
+- Progress tracking for long operations
 
 ## Dependencies
 
@@ -120,11 +81,12 @@ The processed data includes:
 - pandas
 - numpy
 - pyarrow
+- requests (for data download)
 - logging
 
 ## Notes
 
-- The system processes data in chunks to manage memory efficiently
-- All timestamps are converted to UTC
-- Data is downcast to float32 to reduce memory footprint
-- Session names are converted to strings for parquet storage
+- All timestamps are in UTC
+- Data is processed in chunks for memory efficiency
+- Each indicator's output is prefixed with its name (e.g., 'bb_' for Bollinger Bands)
+- The system automatically handles data type conversions for parquet storage
