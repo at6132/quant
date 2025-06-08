@@ -67,6 +67,80 @@ Each parquet file contains the original price data plus all the indicators descr
 - Identifies trend continuation and reversal patterns
 - Generates signals based on trend analysis
 
+## Running the ML Pipeline
+
+### Prerequisites
+- Python 3.8+
+- Git
+- pip (Python package manager)
+
+### Installation
+
+1. Create and activate a virtual environment:
+```bash
+python -m venv venv
+# On Windows:
+venv\Scripts\activate
+# On Unix/MacOS:
+source venv/bin/activate
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+### Running the System
+
+1. **Data Preparation** (Already completed from steps above)
+   - Data has been collected and processed
+   - Available in `processed_data/` directory
+
+2. **Run the Pipeline**:
+```bash
+python main.py -c config.yml
+```
+
+This will:
+- Load and preprocess the data
+- Mine trading rules
+- Train LightGBM model (takes ~40-50 minutes)
+- Train TFT model
+- Generate predictions
+- Save results
+
+3. **Expected Output**:
+   - In `logs/`: Detailed training logs
+   - In `models/`: Trained model files
+   - In `results/`: Performance metrics and predictions
+   - In `artefacts/`: Generated trading rules and visualizations
+
+### Using the Results
+
+1. **Trading Rules** (`artefacts/rules/`):
+   - Review mined rules in `rules.json`
+   - Each rule contains:
+     - Indicator combinations
+     - Precision and recall metrics
+     - Support level
+
+2. **Model Predictions** (`results/predictions/`):
+   - LightGBM predictions: `lgbm_predictions.csv`
+   - TFT predictions: `tft_predictions.csv`
+   - Combined predictions: `ensemble_predictions.csv`
+
+3. **Performance Metrics** (`results/metrics/`):
+   - Accuracy, precision, recall, F1 scores
+   - Confusion matrices
+   - ROC curves
+   - Performance by timeframe
+
+4. **Visualizations** (`artefacts/plots/`):
+   - Rule performance plots
+   - Model prediction plots
+   - Feature importance plots
+   - Performance comparison plots
+
 ## Data Processing Details
 
 The system processes data in chunks to manage memory efficiently and includes:
@@ -74,6 +148,36 @@ The system processes data in chunks to manage memory efficiently and includes:
 - Memory optimization (float32 data types)
 - Error handling and logging
 - Progress tracking for long operations
+
+## Customization
+
+1. **Configuration** (`config.yml`):
+   - Adjust model parameters
+   - Modify rule mining thresholds
+   - Change backtesting settings
+   - Update logging levels
+
+2. **Feature Engineering**:
+   - Add new indicators in `src/features/`
+   - Modify feature combinations
+   - Adjust timeframes
+
+3. **Model Training**:
+   - Modify hyperparameter ranges
+   - Add new models
+   - Change evaluation metrics
+
+## Troubleshooting
+
+1. **Common Issues**:
+   - Memory errors: Reduce batch size in config
+   - Training time: Adjust number of trials
+   - Data issues: Check data preprocessing
+
+2. **Logs**:
+   - Check `logs/` for detailed error messages
+   - Review model training progress
+   - Monitor system performance
 
 ## Dependencies
 
@@ -83,6 +187,11 @@ The system processes data in chunks to manage memory efficiently and includes:
 - pyarrow
 - requests (for data download)
 - logging
+- lightgbm
+- pytorch
+- pytorch-forecasting
+- optuna
+- scikit-learn
 
 ## Notes
 
@@ -90,3 +199,15 @@ The system processes data in chunks to manage memory efficiently and includes:
 - Data is processed in chunks for memory efficiency
 - Each indicator's output is prefixed with its name (e.g., 'bb_' for Bollinger Bands)
 - The system automatically handles data type conversions for parquet storage
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
