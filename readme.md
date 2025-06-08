@@ -87,6 +87,8 @@ source venv/bin/activate
 
 2. Install dependencies:
 ```bash
+cd Algorithm1
+
 pip install -r requirements.txt
 ```
 
