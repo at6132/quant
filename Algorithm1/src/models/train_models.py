@@ -138,68 +138,142 @@ def train_tft_model(df: pd.DataFrame, config: Dict) -> Any:
     
     logger.info(f"Using {len(feature_cols)} numeric features for TFT training")
     
-    # Create time index
+    # Create time index and group by day
     df['time_idx'] = np.arange(len(df))
+    df['day'] = df.index.date.astype(str)  # Group by day as string
     
-    # Create training dataset with modified target normalizer
+    # Calculate appropriate encoder length based on data size
+    total_length = len(df)
+    min_required_length = 100  # Minimum required data points
+    
+    if total_length < min_required_length:
+        logger.warning(f"Not enough data points for TFT training. Required: {min_required_length}, Got: {total_length}")
+        return None
+    
+    # Use a small fixed encoder length
+    encoder_length = 24  # Use last 24 points for prediction
+    logger.info(f"Using encoder length: {encoder_length} (total data points: {total_length})")
+    
+    # Create training dataset with modified grouping
     training = TimeSeriesDataSet(
         data=df,
         time_idx='time_idx',
         target='label',
-        group_ids=['time_idx'],  # No grouping needed for single series
-        min_encoder_length=config['models']['tft']['encoder_length'] // 2,
-        max_encoder_length=config['models']['tft']['encoder_length'],
+        group_ids=['day'],  # Group by day
+        min_encoder_length=encoder_length,
+        max_encoder_length=encoder_length,
         min_prediction_length=1,
         max_prediction_length=1,
-        static_categoricals=[],
+        static_categoricals=['day'],  # Add day as static categorical
         static_reals=[],
         time_varying_known_categoricals=[],
         time_varying_known_reals=['time_idx'],
         time_varying_unknown_categoricals=[],
         time_varying_unknown_reals=feature_cols,
-        target_normalizer=None,  # Disable target normalization since we're using integer labels
+        target_normalizer=None,
         add_relative_time_idx=True,
         add_target_scales=True,
         add_encoder_length=True,
+        allow_missing_timesteps=True,  # Allow missing timesteps
     )
     
     # Create validation dataset
-    validation = TimeSeriesDataSet.from_dataset(training, df, min_prediction_idx=len(df) // 2)
+    validation = TimeSeriesDataSet.from_dataset(
+        training, 
+        df, 
+        min_prediction_idx=total_length - encoder_length - 1
+    )
     
-    # Create dataloaders
-    batch_size = config['models']['tft']['batch_size']
+    # Create dataloaders with small batch size
+    batch_size = 32
+    logger.info(f"Using batch size: {batch_size}")
+    
     train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=0)
     val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size, num_workers=0)
     
-    # Define model
+    # Create TFT model
     tft = TemporalFusionTransformer.from_dataset(
         training,
-        learning_rate=0.03,
-        hidden_size=32,
-        attention_head_size=4,
+        learning_rate=0.01,
+        hidden_size=16,
+        attention_head_size=2,
         dropout=0.1,
-        hidden_continuous_size=16,
+        hidden_continuous_size=8,
         loss=QuantileLoss(),
         log_interval=10,
         reduce_on_plateau_patience=4
     )
     
-    # Train model
+    # Create Lightning module wrapper
+    class TFTLightningModule(pl.LightningModule):
+        def __init__(self, model):
+            super().__init__()
+            self.model = model
+            
+        def forward(self, x):
+            # Convert tuple batch to dictionary if needed
+            if isinstance(x, tuple):
+                x = x[0]  # Get the first element of the tuple
+            return self.model(x)
+            
+        def training_step(self, batch, batch_idx):
+            # Convert tuple batch to dictionary if needed
+            if isinstance(batch, tuple):
+                batch = batch[0]  # Get the first element of the tuple
+            y_hat = self(batch)
+            # Extract target from batch
+            target = batch["target"]
+            loss = self.model.loss(y_hat, target)
+            self.log('train_loss', loss)
+            return loss
+            
+        def validation_step(self, batch, batch_idx):
+            # Convert tuple batch to dictionary if needed
+            if isinstance(batch, tuple):
+                batch = batch[0]  # Get the first element of the tuple
+            y_hat = self(batch)
+            # Extract target from batch
+            target = batch["target"]
+            loss = self.model.loss(y_hat, target)
+            self.log('val_loss', loss)
+            return loss
+            
+        def configure_optimizers(self):
+            return self.model.configure_optimizers()
+    
+    # Wrap TFT model in Lightning module
+    model = TFTLightningModule(tft)
+
+    # Robust device and precision selection
+    if torch.cuda.is_available():
+        logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        accelerator = "gpu"
+        devices = 1
+        precision = "16-mixed"
+    else:
+        logger.warning("CUDA not detected. Using CPU.")
+        accelerator = "cpu"
+        devices = 1  # Must be int > 0 for CPU
+        precision = "32"
+
+    # Train model with correct device/precision
     trainer = pl.Trainer(
-        max_epochs=config['models']['tft']['max_epochs'],
-        accelerator='auto',
+        max_epochs=10,  # Reduced number of epochs
+        accelerator=accelerator,
+        devices=devices,
         enable_model_summary=True,
         gradient_clip_val=0.1,
+        precision=precision,
     )
     
     trainer.fit(
-        tft,
+        model,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader,
     )
     
     logger.info("TFT training complete")
-    return tft
+    return model
 
 def train_models(df: pd.DataFrame, config: Dict) -> Dict:
     """Train all models."""

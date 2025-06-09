@@ -26,7 +26,7 @@ rule_mining:
 # Model parameters
 models:
   lgbm:
-    n_trials: 50  # Number of hyperparameter optimization trials
+    n_trials: 1  # Number of hyperparameter optimization trials
     early_stopping_rounds: 50
     num_boost_round: 1000
   
