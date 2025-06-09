@@ -128,16 +128,20 @@ def train_tft_model(df: pd.DataFrame, config: Dict) -> Any:
                    if col not in ['label', 'open', 'high', 'low', 'close'] 
                    and pd.api.types.is_numeric_dtype(df[col])]
     
-    # Fill missing values with 0
+    # Fill missing values with 0 and handle infinite values
     df = df.copy()
     df[feature_cols] = df[feature_cols].fillna(0)
+    df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], 0)
+    
+    # Ensure label is integer type and handle any non-finite values
+    df['label'] = df['label'].fillna(0).replace([np.inf, -np.inf], 0).astype(int)
     
     logger.info(f"Using {len(feature_cols)} numeric features for TFT training")
     
     # Create time index
     df['time_idx'] = np.arange(len(df))
     
-    # Create training dataset
+    # Create training dataset with modified target normalizer
     training = TimeSeriesDataSet(
         data=df,
         time_idx='time_idx',
@@ -153,7 +157,7 @@ def train_tft_model(df: pd.DataFrame, config: Dict) -> Any:
         time_varying_known_reals=['time_idx'],
         time_varying_unknown_categoricals=[],
         time_varying_unknown_reals=feature_cols,
-        target_normalizer=GroupNormalizer(groups=['time_idx']),
+        target_normalizer=None,  # Disable target normalization since we're using integer labels
         add_relative_time_idx=True,
         add_target_scales=True,
         add_encoder_length=True,
