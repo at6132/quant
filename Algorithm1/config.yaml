@@ -1,21 +1,21 @@
 # Data parameters
 # Merged from config.yaml and config.yml
 
-data_dir: "/quant"  # Updated to absolute path
+data_dir: "../processed_data"  # This is where our raw data files are
 price_cols: ["open", "high", "low", "close", "volume"]
 timeframes: ["15Second", "1minute", "15minute", "1hour", "4hours"]  # All available timeframes
 
 data:
-  raw_dir: "raw_data"
-  processed_dir: "/quant/processed_data"  # Updated to absolute path
+  raw_dir: "../processed_data"  # Same as data_dir since that's where our files are
+  processed_dir: "processed_data"  # Where the algorithm will save its processed data
   features_dir: "features"
   symbol: "BTCUSDT"
   timeframe_files:
-    "15Second": "/quant/processed_data/15Second.parquet"
-    "1minute": "/quant/processed_data/1minute.parquet"
-    "15minute": "/quant/processed_data/15minute.parquet"
-    "1hour": "/quant/processed_data/1hour.parquet"
-    "4hours": "/quant/processed_data/4hours.parquet"
+    "15Second": "15Second.parquet"  # Just the filename, path is handled by data_dir
+    "1minute": "1minute.parquet"
+    "15minute": "15minute.parquet"
+    "1hour": "1hour.parquet"
+    "4hours": "4hours.parquet"
   start_date: "2023-01-01"
   end_date: "2024-01-01"
 
