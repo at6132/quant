@@ -80,9 +80,9 @@ Each parquet file contains the original price data plus all the indicators descr
 ```bash
 cd Algorithm1
 
-python3.10 -m venv venv
+py -3.10 -m venv venv
 # On Windows:
-venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
 # On Unix/MacOS:
 source venv/bin/activate
 ```
