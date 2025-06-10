@@ -1,1 +1,0 @@
-# Quantsys trading system package
