@@ -70,7 +70,7 @@ Each parquet file contains the original price data plus all the indicators descr
 ## Running the ML Pipeline
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.10
 - Git
 - pip (Python package manager)
 
@@ -80,7 +80,7 @@ Each parquet file contains the original price data plus all the indicators descr
 ```bash
 cd Algorithm1
 
-python -m venv venv310
+python3.10 -m venv venv
 # On Windows:
 venv\Scripts\activate
 # On Unix/MacOS:
@@ -89,8 +89,6 @@ source venv/bin/activate
 
 2. Install dependencies (Currently only support python 3.10):
 ```bash
-cd Algorithm1
-
 pip install -r requirements.txt
 ```
 
