@@ -320,6 +320,9 @@ def process_chunk(chunk_df, start_idx, full_df):
             # 8. Process BB OB Engine
             logger.info(f"Processing BB OB Engine")
             bb_df = chunk_df.copy()
+            # Add time column in milliseconds if not present
+            if 'time' not in bb_df.columns:
+                bb_df['time'] = bb_df.index.astype(np.int64) // 10**6  # Convert to milliseconds
             bb_df = bb_df.reset_index(drop=True)  # Reset to integer index
             bb_result = list(bb_process(bb_df))
             if bb_result:
