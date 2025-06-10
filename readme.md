@@ -85,7 +85,7 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-2. Install dependencies:
+2. Install dependencies (Currently only support python 3.10):
 ```bash
 cd Algorithm1
 
@@ -100,7 +100,7 @@ pip install -r requirements.txt
 
 2. **Run the Pipeline**:
 ```bash
-python main.py -c config.yml
+python main.py -c config.yaml
 ```
 
 This will:

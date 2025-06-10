@@ -1,0 +1,115 @@
+# Data parameters
+# Merged from config.yaml and config.yml
+
+data_dir: ".."
+price_cols: ["open", "high", "low", "close", "volume"]
+timeframes: ["15Second"]  # Only use 15s data for testing
+
+data:
+  raw_dir: "raw_data"
+  processed_dir: "processed_data"
+  features_dir: "features"
+  symbol: "BTCUSDT"
+  timeframe: "1m"
+  start_date: "2023-01-01"
+  end_date: "2024-01-01"
+
+# Feature engineering parameters
+feature_engineering:
+  rolling_windows: [5, 10, 20, 50, 100]  # Added more windows for better feature capture
+  cross_indicator_pairs:
+    - ["rsi", "macd"]
+    - ["volume", "close"]
+    - ["bollinger_bands", "momentum"]
+    - ["volume_ma", "volume_std"]
+  time_features: ["hour", "minute", "day_of_week"]
+
+# Label generation parameters
+label_generation:
+  min_move_size: 0.3  # Reduced for 15s timeframe
+  max_holding_time: 15  # Reduced for 15s timeframe
+  min_holding_time: 1  # Minimum holding time in minutes
+  stop_loss: 0.2  # Tighter stop loss for 15s
+  take_profit: 0.4  # Adjusted take profit for 15s
+
+labeling:
+  threshold: 0.001  # 0.1% return threshold for binary classification
+  lookforward: 10   # Number of periods to look forward for label generation
+
+features:
+  technical_indicators:
+    - rsi
+    - macd
+    - bollinger_bands
+    - momentum
+    - volume_ma
+    - volume_std
+    - volume_ratio
+    - high_low_ratio
+    - close_open_ratio
+  time_features:
+    - hour
+    - day_of_week
+
+# Model parameters
+models:
+  lgbm:
+    n_trials: 20  # Increased trials for better optimization
+    num_leaves: 31
+    learning_rate: 0.05
+    n_estimators: 200  # Increased for better performance
+    max_depth: 6
+    min_child_samples: 20
+    subsample: 0.8
+    colsample_bytree: 0.8
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    random_state: 42
+    n_jobs: -1
+    validation_size: 1000  # Increased validation size
+  tft:
+    learning_rate: 0.001
+    hidden_size: 64  # Increased for better feature capture
+    attention_head_size: 8
+    dropout: 0.1
+    hidden_continuous_size: 32
+    max_epochs: 20  # Increased epochs
+    batch_size: 128
+    encoder_length: 48  # Increased for better context
+    validation_size: 1000
+    params:
+      loss: "quantile"
+    train:
+      max_epochs: 20
+      batch_size: 128
+      validation_size: 1000
+      random_state: 42
+
+# Rule mining parameters
+rule_mining:
+  max_rules: 100
+  min_support: 0.01
+  min_confidence: 0.5
+  max_indicators: 2
+  max_combinations: 100
+  min_precision: 0.5
+  min_recall: 0.5
+
+# Backtesting parameters
+backtesting:
+  n_splits: 5
+  initial_capital: 100000
+
+# Logging parameters
+logging:
+  level: "INFO"
+  file: "logs/trading.log"
+
+# Label parameters
+label:
+  horizon_minutes: 15
+  threshold: 0.001
+  dollar_threshold: 10
+
+model:
+  models_dir: "models" 

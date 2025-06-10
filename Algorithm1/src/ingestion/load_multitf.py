@@ -21,38 +21,35 @@ def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
 
 def extract_base_columns(df: pd.DataFrame, required_cols: List[str]) -> pd.DataFrame:
     """
-    Extract base price columns from prefixed columns.
-    For example, if we have 'pvsra_open', 'pvsra_high', etc., we'll use those as our base columns.
+    Extract base price columns from the DataFrame.
+    Handles both simple column names (e.g. 'open') and suffixed names (e.g. '15Second_open').
     
     Args:
-        df: Input DataFrame with prefixed columns
-        required_cols: List of required base column names
+        df: Input DataFrame
+        required_cols: List of required column names (e.g. ['open', 'high', 'low', 'close'])
         
     Returns:
-        DataFrame with base columns extracted
+        DataFrame with only the base price columns
     """
-    # Find the first occurrence of each required column with any prefix
     base_cols = {}
+    
     for req_col in required_cols:
-        # Look for columns ending with the required name
-        matches = [col for col in df.columns if col.endswith(f"_{req_col}")]
-        if matches:
-            # Use the first match
-            base_cols[req_col] = matches[0]
-            logger.info(f"Using {matches[0]} as base column for {req_col}")
+        # Try exact match first
+        if req_col in df.columns:
+            base_cols[req_col] = df[req_col]
         else:
-            raise ValueError(f"Could not find any column ending with _{req_col}")
+            # Try finding column ending with _req_col
+            matching_cols = [col for col in df.columns if col.endswith(f"_{req_col}")]
+            if matching_cols:
+                base_cols[req_col] = df[matching_cols[0]]
+            else:
+                raise ValueError(f"Could not find column '{req_col}' or any column ending with '_{req_col}'")
     
-    # Create new DataFrame with base columns
-    result = pd.DataFrame(index=df.index)
-    for base_name, prefixed_name in base_cols.items():
-        result[base_name] = df[prefixed_name]
-    
-    return result
+    return pd.DataFrame(base_cols, index=df.index)
 
 def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
     """
-    Load all timeframe parquet files and ensure they have proper UTC timestamps.
+    Load all timeframe files and ensure they have proper UTC timestamps.
     
     Args:
         cfg: Configuration dictionary containing data_dir and timeframes
@@ -65,12 +62,25 @@ def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
     
     frames = {}
     for tf in timeframes:
-        file_path = data_dir / f"{tf}.parquet"
-        if not file_path.exists():
-            raise FileNotFoundError(f"Missing parquet file: {file_path}")
+        # Try both parquet and csv files
+        parquet_path = data_dir / f"{tf}.parquet"
+        csv_path = data_dir / f"btcusdt_15s_test.csv" if tf == "15Second" else data_dir / f"{tf}.csv"
+        
+        if parquet_path.exists():
+            file_path = parquet_path
+            df = pd.read_parquet(file_path)
+        elif csv_path.exists():
+            file_path = csv_path
+            df = pd.read_csv(file_path)
+            # Set index to date column and ensure it's datetime
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.set_index('date')
+            # Remove any duplicate indices
+            df = df[~df.index.duplicated(keep='first')]
+        else:
+            raise FileNotFoundError(f"Missing data file: {parquet_path} or {csv_path}")
             
         logger.info(f"Loading {tf} data...")
-        df = pd.read_parquet(file_path)
         
         # Normalize column names to lowercase
         df = normalize_column_names(df)
@@ -79,6 +89,8 @@ def load_all_frames(cfg: dict) -> Dict[str, pd.DataFrame]:
         try:
             base_df = extract_base_columns(df, cfg['price_cols'])
             df = pd.concat([base_df, df], axis=1)
+            # Remove duplicate columns, keeping the first occurrence
+            df = df.loc[:, ~df.columns.duplicated()]
         except ValueError as e:
             logger.error(f"Available columns in {tf}: {df.columns.tolist()}")
             raise

@@ -17,6 +17,9 @@ def prepare_tft_data(df: pd.DataFrame, cfg: dict) -> Tuple[TimeSeriesDataSet, Ti
     df = df.copy()
     df['time_idx'] = np.arange(len(df))
     
+    # Convert target column to integer type
+    df['label'] = df['label'].astype(int)
+    
     # Get feature columns
     exclude_cols = ['label', 'move_size', 'time_to_move']
     feature_cols = [col for col in df.columns if col not in exclude_cols]

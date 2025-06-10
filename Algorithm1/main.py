@@ -24,7 +24,6 @@ from src.cleaning.drop_nan_cols import drop_nan_columns_in_frames
 from src.feature_engineering.join_timeframes import join_timeframes
 from src.feature_engineering.engineer_features import engineer_features
 from src.labeling.generate_labels import generate_labels
-from src.rule_mining.mine_rules import mine_rules
 from src.models.train_models import train_models
 from src.backtesting.backtest import backtest
 from src.utils.save_results import save_results
@@ -77,65 +76,82 @@ def save_pipeline_metadata(cfg: dict, start_time: datetime, metrics: dict):
     with open('artefacts/pipeline_metadata.json', 'w') as f:
         json.dump(metadata, f, indent=2)
 
-def main(cfg: Dict):
-    """Main pipeline function."""
-    # Set up logging first
-    logger = setup_logging(cfg)
+def setup_logging(config):
+    """Setup logging configuration"""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
     
-    try:
-        logger.info("Starting pipeline...")
-        
-        # Log system info
-        log_system_info(logger)
-        
-        # Step 1: Load data
-        logger.info("\nStep 1: Loading data...")
-        data = load_all_frames(cfg)
-        
-        # Step 2: Join timeframes
-        logger.info("\nStep 2: Joining timeframes...")
-        joined = join_timeframes(data)
-        
-        # Step 3: Engineer features
-        logger.info("\nStep 3: Engineering features...")
-        features = engineer_features(joined, cfg)
-        
-        # Step 4: Generate labels
-        logger.info("\nStep 4: Generating labels...")
-        labeled_data = generate_labels(features, cfg)
-        
-        # Step 5: Mine rules
-        logger.info("\nStep 5: Mining rules...")
-        rules = mine_rules(labeled_data, cfg)
-        
-        # Step 6: Train models
-        logger.info("\nStep 6: Training models...")
-        models = train_models(labeled_data, cfg)
-        
-        # Step 7: Backtest
-        logger.info("\nStep 7: Running backtest...")
-        results = backtest(labeled_data, models, rules, cfg)
-        
-        # Step 8: Save results
-        logger.info("\nStep 8: Saving results...")
-        save_results(results, cfg)
-        
-        logger.info("\nPipeline completed successfully!")
-        
-    except Exception as e:
-        logger.error(f"Error in main pipeline: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"pipeline_{timestamp}.log"
+    
+    logging.basicConfig(
+        level=config['logging']['level'],
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    return logging.getLogger(__name__)
 
-if __name__ == "__main__":
+def create_directories(config):
+    """Create necessary directories if they don't exist"""
+    dirs = [
+        config['data']['raw_dir'],
+        config['data']['processed_dir'],
+        config['data']['features_dir'],
+        config['model']['models_dir']
+    ]
+    for dir_path in dirs:
+        Path(dir_path).mkdir(parents=True, exist_ok=True)
+
+def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Run the trading pipeline')
     parser.add_argument('-c', '--config', required=True, help='Path to config file')
     args = parser.parse_args()
     
-    # Load config
+    # Load configuration
     with open(args.config, 'r') as f:
-        cfg = yaml.safe_load(f)
+        config = yaml.safe_load(f)
     
-    # Run pipeline
-    main(cfg)
+    # Setup logging
+    logger = setup_logging(config)
+    logger.info("=" * 80)
+    logger.info("Starting new pipeline run")
+    logger.info(f"Log file: logs/pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+    logger.info(f"Log level: {config['logging']['level']}")
+    logger.info("=" * 80)
+    
+    try:
+        # Create necessary directories
+        create_directories(config)
+        
+        # Step 1: Load and process data
+        logger.info("\nStep 1: Loading data...")
+        raw_data_dict = load_all_frames(config)
+        validate_frames(raw_data_dict)
+        # Select the 15Second DataFrame
+        raw_data = raw_data_dict[config['timeframes'][0]]
+        
+        # Step 2: Engineer features
+        logger.info("\nStep 2: Engineering features...")
+        features = engineer_features(raw_data, config)
+        
+        # Step 3: Generate labels
+        logger.info("\nStep 3: Generating labels...")
+        labeled_data = generate_labels(features, config)
+        
+        # Step 4: Train models
+        logger.info("\nStep 4: Training models...")
+        models = train_models(labeled_data, config)
+        
+        logger.info("\nPipeline completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"Error in main pipeline: {str(e)}")
+        logger.error("Traceback:", exc_info=True)
+        raise
+
+if __name__ == "__main__":
+    main()

@@ -9,13 +9,16 @@ numba
 pyarrow>=14.0.1  # for parquet files
 fastparquet>=2023.10.1
 ta
+
 # Machine Learning
 lightgbm>=3.3.0
 scikit-learn>=1.0.0
 optuna>=3.0.0
 mlxtend>=0.23.1  # for rule mining
-torch>=1.13.0
-pytorch-forecasting>=0.10.0
+torch>=2.0.0
+pytorch-lightning>=2.0.0
+pytorch-forecasting>=1.0.0
+torchmetrics>=1.0.0
 
 # Visualization
 matplotlib>=3.5.0
