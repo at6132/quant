@@ -1,13 +1,13 @@
 # Data parameters
 # Merged from config.yaml and config.yml
 
-data_dir: ".."
+data_dir: "../quant"  # Updated to point to the quant directory
 price_cols: ["open", "high", "low", "close", "volume"]
 timeframes: ["15Second", "1minute", "15minute", "1hour", "4hours"]  # All available timeframes
 
 data:
   raw_dir: "raw_data"
-  processed_dir: "processed_data"
+  processed_dir: "processed_data"  # This will now look in quant/processed_data
   features_dir: "features"
   symbol: "BTCUSDT"
   timeframe_files:
