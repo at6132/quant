@@ -76,9 +76,11 @@ Each parquet file contains the original price data plus all the indicators descr
 
 ### Installation
 
-1. Create and activate a virtual environment:
+1. Create and activate a virtual environment (Must have Python 3.10 installed):
 ```bash
-python -m venv venv
+cd Algorithm1
+
+python -m venv venv310
 # On Windows:
 venv\Scripts\activate
 # On Unix/MacOS:
