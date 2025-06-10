@@ -1,0 +1,15 @@
+2025-06-10 13:18:22,086 - INFO - ================================================================================
+2025-06-10 13:18:22,086 - INFO - Starting new pipeline run
+2025-06-10 13:18:22,086 - INFO - Log file: logs/pipeline_20250610_131822.log
+2025-06-10 13:18:22,086 - INFO - Log level: INFO
+2025-06-10 13:18:22,086 - INFO - ================================================================================
+2025-06-10 13:18:22,086 - INFO - 
+Step 1: Loading data...
+2025-06-10 13:18:22,086 - ERROR - Error in main pipeline: Missing data file: ../15Second.parquet or ../btcusdt_15s_test.csv
+2025-06-10 13:18:22,086 - ERROR - Traceback:
+Traceback (most recent call last):
+  File "/workspace/Algorithm1/main.py", line 132, in main
+    raw_data_dict = load_all_frames(config)
+  File "/workspace/Algorithm1/src/ingestion/load_multitf.py", line 81, in load_all_frames
+    raise FileNotFoundError(f"Missing data file: {parquet_path} or {csv_path}")
+FileNotFoundError: Missing data file: ../15Second.parquet or ../btcusdt_15s_test.csv

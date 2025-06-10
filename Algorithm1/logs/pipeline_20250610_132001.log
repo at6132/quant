@@ -1,0 +1,138 @@
+2025-06-10 13:20:01,460 - INFO - ================================================================================
+2025-06-10 13:20:01,460 - INFO - Starting new pipeline run
+2025-06-10 13:20:01,460 - INFO - Log file: logs/pipeline_20250610_132001.log
+2025-06-10 13:20:01,460 - INFO - Log level: INFO
+2025-06-10 13:20:01,460 - INFO - ================================================================================
+2025-06-10 13:20:01,460 - INFO - 
+Step 1: Loading data...
+2025-06-10 13:20:01,464 - INFO - Loading 15Second data...
+2025-06-10 13:20:01,464 - INFO - Loaded 15Second data: 21 rows, 5 columns
+2025-06-10 13:20:01,466 - WARNING - 15Second has gaps in timestamp sequence
+2025-06-10 13:20:01,466 - INFO - 
+Step 2: Engineering features...
+2025-06-10 13:20:01,466 - INFO - Starting feature engineering...
+2025-06-10 13:20:01,466 - INFO - Adding rolling statistics...
+2025-06-10 13:20:01,504 - INFO - Adding time-since-event counters...
+2025-06-10 13:20:01,504 - INFO - Adding cross features...
+2025-06-10 13:20:01,509 - INFO - Adding time features...
+2025-06-10 13:20:01,516 - INFO - Feature engineering complete. Final shape: (21, 212)
+2025-06-10 13:20:01,516 - INFO - 
+Step 3: Generating labels...
+2025-06-10 13:20:01,516 - INFO - Generating labels...
+2025-06-10 13:20:01,517 - INFO - 
+Label Distribution:
+2025-06-10 13:20:01,517 - INFO - LongSuccess (1): 0
+2025-06-10 13:20:01,517 - INFO - ShortSuccess (-1): 0
+2025-06-10 13:20:01,517 - INFO - No Signal (0): 21
+2025-06-10 13:20:01,517 - INFO - 
+Move Statistics:
+2025-06-10 13:20:01,518 - INFO - Average move size: $nan
+2025-06-10 13:20:01,518 - INFO - Average time to move: nan minutes
+2025-06-10 13:20:01,518 - INFO - 
+Step 4: Training models...
+2025-06-10 13:20:01,518 - INFO - Starting model training...
+2025-06-10 13:20:01,518 - INFO - Training LightGBM model...
+2025-06-10 13:20:01,519 - INFO - Using 214 numeric features for training
+2025-06-10 13:20:01,526 - ERROR - Error in LightGBM training: Number of classes should be specified and greater than 1 for multiclass training
+2025-06-10 13:20:01,526 - ERROR - Error in model training: Number of classes should be specified and greater than 1 for multiclass training
+2025-06-10 13:20:01,526 - ERROR - Error in main pipeline: Number of classes should be specified and greater than 1 for multiclass training
+2025-06-10 13:20:01,526 - ERROR - Traceback:
+Traceback (most recent call last):
+  File "/workspace/Algorithm1/main.py", line 147, in main
+    models = train_models(labeled_data, config)
+  File "/workspace/Algorithm1/src/models/train_models.py", line 407, in train_models
+    raise e
+  File "/workspace/Algorithm1/src/models/train_models.py", line 389, in train_models
+    lgbm_model = train_lgbm_model(df, config)
+  File "/workspace/Algorithm1/src/models/train_models.py", line 141, in train_lgbm_model
+    raise e
+  File "/workspace/Algorithm1/src/models/train_models.py", line 90, in train_lgbm_model
+    study.optimize(objective, n_trials=config["models"]["lgbm"]["n_trials"])
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/optuna/study/study.py", line 475, in optimize
+    _optimize(
+    ~~~~~~~~~^
+        study=self,
+        ^^^^^^^^^^^
+    ...<7 lines>...
+        show_progress_bar=show_progress_bar,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/optuna/study/_optimize.py", line 63, in _optimize
+    _optimize_sequential(
+    ~~~~~~~~~~~~~~~~~~~~^
+        study,
+        ^^^^^^
+    ...<8 lines>...
+        progress_bar=progress_bar,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/optuna/study/_optimize.py", line 160, in _optimize_sequential
+    frozen_trial = _run_trial(study, func, catch)
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/optuna/study/_optimize.py", line 248, in _run_trial
+    raise func_err
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/optuna/study/_optimize.py", line 197, in _run_trial
+    value_or_values = func(trial)
+  File "/workspace/Algorithm1/src/models/train_models.py", line 75, in objective
+    model.fit(
+    ~~~~~~~~~^
+        X_train, y_train,
+        ^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        callbacks=[lgb.early_stopping(50)]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/sklearn.py", line 1560, in fit
+    super().fit(
+    ~~~~~~~~~~~^
+        X,
+        ^^
+    ...<12 lines>...
+        init_model=init_model,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/sklearn.py", line 1049, in fit
+    self._Booster = train(
+                    ~~~~~^
+        params=params,
+        ^^^^^^^^^^^^^^
+    ...<6 lines>...
+        callbacks=callbacks,
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/engine.py", line 297, in train
+    booster = Booster(params=params, train_set=train_set)
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/basic.py", line 3656, in __init__
+    train_set.construct()
+    ~~~~~~~~~~~~~~~~~~~^^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/basic.py", line 2590, in construct
+    self._lazy_init(
+    ~~~~~~~~~~~~~~~^
+        data=self.data,
+        ^^^^^^^^^^^^^^^
+    ...<9 lines>...
+        position=self.position,
+        ^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/basic.py", line 2187, in _lazy_init
+    self.__init_from_np2d(data, params_str, ref_dataset)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/basic.py", line 2318, in __init_from_np2d
+    _safe_call(
+    ~~~~~~~~~~^
+        _LIB.LGBM_DatasetCreateFromMat(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<8 lines>...
+        )
+        ^
+    )
+    ^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/lightgbm/basic.py", line 313, in _safe_call
+    raise LightGBMError(_LIB.LGBM_GetLastError().decode("utf-8"))
+lightgbm.basic.LightGBMError: Number of classes should be specified and greater than 1 for multiclass training
