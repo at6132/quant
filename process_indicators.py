@@ -459,6 +459,6 @@ if __name__ == "__main__":
     )
     
     # Process the data
-    input_file = "btcusdt_15s.csv"  # Your input file
+    input_file = "BTCUSDT_15s_last7days.csv"  # Your input file
     output_dir = "processed_data"  # Directory to save parquet files
     process_data(input_file, output_dir) 
