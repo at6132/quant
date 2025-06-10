@@ -323,16 +323,42 @@ def process_chunk(chunk_df, start_idx, full_df):
             # Add time column in milliseconds if not present
             if 'time' not in bb_df.columns:
                 bb_df['time'] = bb_df.index.astype(np.int64) // 10**6  # Convert to milliseconds
-            bb_df = bb_df.reset_index(drop=True)  # Reset to integer index
-            bb_result = list(bb_process(bb_df))
-            if bb_result:
-                bb_df = pd.DataFrame(bb_result, index=chunk_df.index)  # Set back to datetime index
+            
+            # Limit the data size for BB processing
+            max_rows = 10000  # Process in smaller chunks
+            if len(bb_df) > max_rows:
+                logger.info(f"BB OB Engine: Processing in chunks of {max_rows} rows")
+                bb_results = []
+                for i in range(0, len(bb_df), max_rows):
+                    chunk = bb_df.iloc[i:i + max_rows].copy()
+                    chunk = chunk.reset_index(drop=True)
+                    try:
+                        chunk_result = list(bb_process(chunk))
+                        if chunk_result:
+                            bb_results.extend(chunk_result)
+                    except Exception as chunk_error:
+                        logger.error(f"Error processing BB chunk {i}: {str(chunk_error)}")
+                        continue
+                
+                if bb_results:
+                    bb_df = pd.DataFrame(bb_results, index=chunk_df.index[:len(bb_results)])
+            else:
+                bb_df = bb_df.reset_index(drop=True)
+                bb_result = list(bb_process(bb_df))
+                if bb_result:
+                    bb_df = pd.DataFrame(bb_result, index=chunk_df.index)
+            
+            if not bb_df.empty:
                 logger.info(f"BB OB Engine added columns: {bb_df.columns.tolist()}")
                 bb_df = bb_df.add_prefix('bb_')
                 result_df = pd.concat([result_df, bb_df], axis=1)
+            else:
+                logger.warning("BB OB Engine returned empty results")
+                
         except Exception as e:
             errors.append(f"Error in BB OB Engine: {str(e)}")
             logger.error(f"BB OB Engine error: {str(e)}")
+            logger.error(traceback.format_exc())
             
         # Clean up memory
         gc.collect()
