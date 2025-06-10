@@ -6,3 +6,5 @@ pytz>=2023.3
 requests
 tqdm
 psutil
+pyarrow
+fastparquet
