@@ -145,7 +145,7 @@ pip install -r requirements.txt
 - Logs: See `logs/` for details
 
 ## Dependencies
-- Python 3.10+
+- Python 3.10
 - pandas, numpy, pyarrow, requests, logging, lightgbm, pytorch, pytorch-forecasting, optuna, scikit-learn
 
 ## License

@@ -9,6 +9,7 @@ from Core.datafeed_kraken import KrakenDataFeed
 from utils import align_features
 import threading
 import pandas as pd
+import logging
 
 # Action mapping
 ACTION_MAP = {
@@ -21,14 +22,17 @@ ACTION_MAP = {
     6: 'add_short'
 }
 
+logger = logging.getLogger(__name__)
+
 class PaperTrader:
-    def __init__(self, model_path, initial_capital, webapp_callback=None):
+    def __init__(self, model_path, initial_capital, webapp_callback=None, set_live_price_callback=None):
         self.model = joblib.load(model_path)
         self.account = Account(initial_capital)
         self.risk_manager = RiskManager()
         self.data_feed = KrakenDataFeed(symbol="XBT/USD")
         self.data_feed.set_callback(self.on_new_data)
         self.webapp_callback = webapp_callback
+        self.set_live_price_callback = set_live_price_callback
         self.last_features = None
         self.last_price = None
         self.last_timestamp = None
@@ -43,6 +47,10 @@ class PaperTrader:
     def on_new_data(self, features_df):
         if features_df is None or not isinstance(features_df, pd.DataFrame) or features_df.empty:
             return
+        price = features_df['close'].iloc[-1]
+        logger.info(f"[SCAN] Scanning for trades | Current BTC price: {price}")
+        if self.set_live_price_callback:
+            self.set_live_price_callback(price)
         X = align_features(features_df, self.model.feature_name())
         # Get action probabilities
         if hasattr(self.model, 'predict_proba'):
@@ -52,7 +60,6 @@ class PaperTrader:
         action_idx = int(proba_vec.argmax())
         action = ACTION_MAP.get(action_idx, 'hold')
         action_proba = proba_vec[action_idx]
-        price = features_df['close'].iloc[-1]
         timestamp = features_df['timestamp'].iloc[-1] if 'timestamp' in features_df else time.time()
         trade_results = []
         print(f"[SCAN] Action: {action} (prob={action_proba:.2f}) at price {price}")

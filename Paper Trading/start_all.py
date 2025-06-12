@@ -1,5 +1,6 @@
 import threading
 import time
+import os
 from webapp import app, update_state, set_live_price
 from paper_trader import PaperTrader
 
@@ -29,6 +30,7 @@ def run_trader():
 if __name__ == "__main__":
     try:
         webapp_thread = threading.Thread(target=run_webapp)
+        webapp_thread.daemon = True
         webapp_thread.start()
         time.sleep(2)
         trader_thread = threading.Thread(target=run_trader)
@@ -40,8 +42,8 @@ if __name__ == "__main__":
         if trader_instance:
             trader_instance.stop()
         if webapp_thread:
-            # Flask will exit on Ctrl+C
             pass
         if trader_thread:
             trader_thread.join(timeout=2)
-        print("Shutdown complete.") 
+        print("Shutdown complete.")
+        os._exit(0) 
