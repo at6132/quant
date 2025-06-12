@@ -1,153 +1,104 @@
-import time
-import joblib
-from risk_module import RiskManager
-from account import Account
-import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Core.datafeed_kraken import KrakenDataFeed
-from utils import align_features
-import threading
-import pandas as pd
-import logging
+import time
+import pickle
+import krakenex
+from webapp import update_state, set_live_price
+from data_processor import DataProcessor
+from account import Account
+from risk_manager import RiskManager
 
 # Action mapping
-ACTION_MAP = {
-    0: 'hold',
-    1: 'open_long',
-    2: 'open_short',
-    3: 'close_long',
-    4: 'close_short',
-    5: 'add_long',
-    6: 'add_short'
+ACTIONS = {
+    0: 'HOLD',
+    1: 'OPEN_LONG',
+    2: 'CLOSE_LONG',
+    3: 'OPEN_SHORT',
+    4: 'CLOSE_SHORT',
+    5: 'ADD_LONG',
+    6: 'ADD_SHORT'
 }
 
-logger = logging.getLogger(__name__)
-
-class PaperTrader:
-    def __init__(self, model_path, initial_capital, webapp_callback=None, set_live_price_callback=None):
-        self.model = joblib.load(model_path)
-        self.account = Account(initial_capital)
-        self.risk_manager = RiskManager()
-        self.data_feed = KrakenDataFeed(symbol="XBT/USD")
-        self.data_feed.set_callback(self.on_new_data)
-        self.webapp_callback = webapp_callback
-        self.set_live_price_callback = set_live_price_callback
-        self.last_features = None
-        self.last_price = None
-        self.last_timestamp = None
-        self.holding_period = 15 * 4  # e.g. 1 minute (4x 15s bars)
-        self.max_holding_period = 15 * 20  # e.g. 5 minutes
-        self.running = False
-        self.tp_pct = 0.01
-        self.sl_pct = 0.005
-        self.position_holding = {}  # pos_id: bars held
-        self.pos_counter = 0
-
-    def on_new_data(self, features_df):
-        if features_df is None or not isinstance(features_df, pd.DataFrame) or features_df.empty:
-            return
-        price = features_df['close'].iloc[-1]
-        logger.info(f"[SCAN] Scanning for trades | Current BTC price: {price}")
-        if self.set_live_price_callback:
-            self.set_live_price_callback(price)
-        X = align_features(features_df, self.model.feature_name())
-        # Get action probabilities
-        if hasattr(self.model, 'predict_proba'):
-            proba_vec = self.model.predict_proba(X)[-1]
-        else:
-            proba_vec = self.model.predict(X)[-1]
-        action_idx = int(proba_vec.argmax())
-        action = ACTION_MAP.get(action_idx, 'hold')
-        action_proba = proba_vec[action_idx]
-        timestamp = features_df['timestamp'].iloc[-1] if 'timestamp' in features_df else time.time()
-        trade_results = []
-        print(f"[SCAN] Action: {action} (prob={action_proba:.2f}) at price {price}")
-        # Check TP/SL for all open positions
-        closed = self.account.check_tp_sl(price, timestamp)
-        for trade in closed:
-            print(f"[EXEC] Closed position: {trade}")
-            self.risk_manager.update_after_trade(trade['net_pnl'])
-            trade_results.append(trade)
-        # Update holding period for each open position
-        for pos in self.account.open_positions:
-            pos_id = id(pos)
-            self.position_holding[pos_id] = self.position_holding.get(pos_id, 0) + 1
-        # Close positions that exceed max holding period
-        for pos in self.account.open_positions[:]:
-            pos_id = id(pos)
-            if self.position_holding.get(pos_id, 0) >= self.max_holding_period:
-                trade = self.account.close_trade(pos, price, timestamp, reason='max-hold')
-                print(f"[EXEC] Closed position (max-hold): {trade}")
-                self.risk_manager.update_after_trade(trade['net_pnl'])
-                trade_results.append(trade)
-                self.position_holding.pop(pos_id, None)
-        # --- Action logic ---
-        if action == 'open_long':
-            size = self.risk_manager.get_position_size(action_proba, self.account)
-            if size > 0 and self.account.capital >= size:
-                opened = self.account.open_trade(price, size, 'long', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
-                if opened:
-                    pos = self.account.open_positions[-1]
-                    self.position_holding[id(pos)] = 0
-                    print(f"[EXEC] Opened LONG: {size} at {price}")
-        elif action == 'open_short':
-            size = self.risk_manager.get_position_size(action_proba, self.account)
-            if size > 0 and self.account.capital >= size:
-                opened = self.account.open_trade(price, size, 'short', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
-                if opened:
-                    pos = self.account.open_positions[-1]
-                    self.position_holding[id(pos)] = 0
-                    print(f"[EXEC] Opened SHORT: {size} at {price}")
-        elif action == 'add_long':
-            size = self.risk_manager.get_position_size(action_proba, self.account)
-            if size > 0 and self.account.capital >= size:
-                opened = self.account.open_trade(price, size, 'long', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
-                if opened:
-                    pos = self.account.open_positions[-1]
-                    self.position_holding[id(pos)] = 0
-                    print(f"[EXEC] Added LONG: {size} at {price}")
-        elif action == 'add_short':
-            size = self.risk_manager.get_position_size(action_proba, self.account)
-            if size > 0 and self.account.capital >= size:
-                opened = self.account.open_trade(price, size, 'short', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
-                if opened:
-                    pos = self.account.open_positions[-1]
-                    self.position_holding[id(pos)] = 0
-                    print(f"[EXEC] Added SHORT: {size} at {price}")
-        elif action == 'close_long':
-            for pos in self.account.open_positions[:]:
-                if pos['direction'] == 'long':
-                    trade = self.account.close_trade(pos, price, timestamp, reason='model-close')
-                    print(f"[EXEC] Closed LONG: {trade}")
-                    self.risk_manager.update_after_trade(trade['net_pnl'])
-                    trade_results.append(trade)
-                    self.position_holding.pop(id(pos), None)
-        elif action == 'close_short':
-            for pos in self.account.open_positions[:]:
-                if pos['direction'] == 'short':
-                    trade = self.account.close_trade(pos, price, timestamp, reason='model-close')
-                    print(f"[EXEC] Closed SHORT: {trade}")
-                    self.risk_manager.update_after_trade(trade['net_pnl'])
-                    trade_results.append(trade)
-                    self.position_holding.pop(id(pos), None)
-        # No action for 'hold'
-        if self.webapp_callback:
-            self.webapp_callback(self.account, trade_results)
-
-    def run(self):
-        self.running = True
-        self.data_feed.start()
+def main():
+    # Load latest model
+    model_path = 'artefacts/lgbm_model.pkl'
+    if not os.path.exists(model_path):
+        print(f"Error: Model not found at {model_path}")
+        return
+    
+    with open(model_path, 'rb') as f:
+        model = pickle.load(f)
+    
+    # Initialize account and risk manager
+    account = Account(initial_capital=1_000_000)
+    risk_manager = RiskManager(account)
+    
+    # Initialize data processor
+    processor = DataProcessor()
+    
+    # Initialize WebSocket connection
+    ws = krakenex.WebSocket()
+    
+    def on_message(msg):
         try:
-            while self.running:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            self.stop()
-
-    def stop(self):
-        self.running = False
-        self.data_feed.stop()
+            if isinstance(msg, dict) and 'price' in msg:
+                price = float(msg['price'])
+                print(f"\nReceived price: ${price:,.2f}")
+                
+                # Update web app state with live price
+                set_live_price(price)
+                
+                # Process data and get features
+                features = processor.process_live_data(price)
+                if features is not None:
+                    # Get model prediction
+                    pred = model.predict([features])[0]
+                    proba = model.predict_proba([features])[0]
+                    
+                    # Get action and probability
+                    action = ACTIONS[pred]
+                    action_prob = proba[pred]
+                    
+                    print(f"\nModel prediction: {action} (confidence: {action_prob:.2%})")
+                    
+                    # Execute trade with risk management
+                    trade_result = risk_manager.execute_trade(action, action_prob, price)
+                    if trade_result:
+                        print(f"Trade executed: {trade_result}")
+                        # Update web app state with new trade
+                        update_state(account, trade_result)
+                    
+        except Exception as e:
+            print(f"Error processing message: {e}")
+    
+    def on_error(error):
+        print(f"WebSocket error: {error}")
+    
+    def on_close():
+        print("WebSocket connection closed")
+    
+    def on_open():
+        print("WebSocket connection established")
+        # Subscribe to BTC/USD ticker
+        ws.subscribe(['BTC/USD'], 'ticker')
+    
+    # Set up WebSocket callbacks
+    ws.on_message = on_message
+    ws.on_error = on_error
+    ws.on_close = on_close
+    ws.on_open = on_open
+    
+    # Start WebSocket connection
+    ws.connect()
+    
+    try:
+        # Keep the main thread alive
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        ws.close()
+        print("WebSocket connection closed")
+        print("Goodbye!")
 
 if __name__ == "__main__":
-    trader = PaperTrader("Algorithm1/artefacts/lgbm_model.pkl", initial_capital=1_000_000)
-    trader.run() 
+    main() 
