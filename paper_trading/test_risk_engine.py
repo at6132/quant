@@ -1,25 +1,6 @@
 import pytest
 import numpy as np
-from risk_engine import RiskEngine
-
-def test_alpha_kelly():
-    """Test α-Kelly calculation."""
-    engine = RiskEngine(alpha=1.7)
-    
-    # Test with different probabilities and R ratios
-    test_cases = [
-        (0.6, 2.0),  # Moderate edge, 2:1 reward
-        (0.7, 1.5),  # Strong edge, 1.5:1 reward
-        (0.5, 3.0),  # No edge, 3:1 reward
-    ]
-    
-    for p, R in test_cases:
-        kelly = engine.alpha_kelly(p, R)
-        # Kelly should be between 0 and 1
-        assert 0 <= kelly <= 1
-        # Higher probability should give higher Kelly
-        if p > 0.5:
-            assert kelly > 0
+from .risk_engine import RiskEngine
 
 def test_bayesian_shrink():
     """Test Bayesian shrinkage."""
@@ -62,24 +43,28 @@ def test_tempered_martingale():
     
     # Test with different loss scenarios
     test_cases = [
-        (0.0, 1000),    # No loss
-        (-100, 1000),   # Small loss
-        (-1000, 1000),  # Large loss
+        (0.0, 1000, 0.98),    # No loss, high prob
+        (-100, 1000, 0.98),   # Small loss, high prob
+        (-1000, 1000, 0.98),  # Large loss, high prob
+        (-100, 1000, 0.8),    # Small loss, low prob (should not martingale)
     ]
     
-    for loss, atr in test_cases:
+    for loss, atr, prob in test_cases:
         engine.last_loss = loss
         engine.price_history = [1000] * 20  # Set ATR
-        mult = engine.tempered_martingale()
+        mult = engine.tempered_martingale(prob)
         # Multiplier should be between 1 and 1 + 2*gamma
         assert 1.0 <= mult <= 1.0 + 2*engine.gamma
-        # No loss should give no multiplier
-        if loss == 0:
+        # No loss or low prob should give no multiplier
+        if loss == 0 or prob < engine.high_conf_threshold:
             assert mult == 1.0
 
 def test_position_sizing():
     """Test full position sizing calculation."""
     engine = RiskEngine()
+    # Simulate some price history and returns to avoid zero ATR/vol_mult
+    engine.price_history = [50000 + i for i in range(25)]
+    engine.daily_returns = np.random.normal(0, 100, 252).tolist()
     
     # Test with different scenarios
     test_cases = [
@@ -90,7 +75,8 @@ def test_position_sizing():
     
     for equity, price, prob in test_cases:
         size, debug = engine.calculate_position_size(equity, price, prob)
-        # Size should be positive and within limits
+        # Size should be positive and within limits, and not nan/inf
+        assert np.isfinite(size)
         assert size >= 0
         assert size * price <= equity * engine.max_position_pct
         # Debug info should contain all components
@@ -99,30 +85,63 @@ def test_position_sizing():
 def test_drawdown_lock():
     """Test drawdown lock mechanism."""
     engine = RiskEngine()
-    
+    # Simulate price history and returns
+    engine.price_history = [50000 + i for i in range(25)]
+    engine.daily_returns = [-100] * 252  # Large negative returns
     # Simulate a large drawdown
     engine.current_drawdown = 1000
-    engine.price_history = [50000] * 20
-    engine.daily_returns = [-100] * 252  # Large negative returns
-    
     # Calculate position size
     size, debug = engine.calculate_position_size(100000, 50000, 0.7)
-    
     # Martingale should be locked at 1.0
     assert debug['martingale'] == 1.0
 
 def test_var_constraint():
     """Test VaR-based position limits."""
     engine = RiskEngine()
-    
-    # Simulate high volatility
+    # Simulate price history and high volatility
+    engine.price_history = [50000 + i for i in range(25)]
     engine.daily_returns = [-1000] * 252  # Large negative returns
-    
     # Calculate position size
     size, debug = engine.calculate_position_size(100000, 50000, 0.7)
-    
     # Size should be limited by VaR
     assert size * 50000 <= abs(debug['var']) * engine.var_multiplier
+
+def test_posterior_kelly():
+    """Test posterior Kelly fraction calculation."""
+    engine = RiskEngine(beta=2.0)
+    # Test with different probabilities and R ratios
+    test_cases = [
+        (0.6, 2.0),  # Moderate edge, 2:1 reward
+        (0.7, 1.5),  # Strong edge, 1.5:1 reward
+        (0.5, 3.0),  # No edge, 3:1 reward
+    ]
+    for p, R in test_cases:
+        engine.rolling_signals = 100  # Set signal count
+        kelly = engine.posterior_kelly(p, R)
+        # Kelly should be between 0 and 1
+        assert 0 <= kelly <= 1
+        # Higher probability should give higher Kelly
+        if p > 0.5:
+            assert kelly > 0
+
+def test_volatility_multiplier():
+    """Test 95th percentile volatility multiplier."""
+    engine = RiskEngine()
+    # Simulate returns
+    engine.daily_returns = np.random.normal(0, 1, 252)  # Random returns
+    # Calculate volatility multiplier
+    vol_mult = engine.calculate_volatility_multiplier()
+    # Multiplier should be positive
+    assert vol_mult > 0
+
+def test_ou_barrier():
+    """Test OU drawdown barrier update."""
+    engine = RiskEngine(ou_mu=0.0, ou_theta=0.1, ou_eta=0.1)
+    # Simulate a drawdown
+    engine.current_drawdown = 1000
+    engine.update_ou_barrier()
+    # Barrier should be updated
+    assert engine.ou_barrier != 0.0
 
 if __name__ == "__main__":
     pytest.main([__file__]) 

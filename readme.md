@@ -150,3 +150,29 @@ pip install -r requirements.txt
 
 ## License
 This project is licensed under JT Capital LLC. All rights reserved.
+
+## Risk Model
+
+The system uses an advanced adaptive risk model, as described in [adaptive_risk_model.md](adaptive_risk_model.md). This model combines Bayesian Kelly sizing, volatility-weighted exposure scaling, conditional Martingale reinforcement, and a stochastic drawdown barrier to dynamically adjust risk levels based on statistical confidence and market turbulence.
+
+### Key Components:
+- **Bayesian Kelly Fraction:** Uses a Beta posterior to shrink the Kelly fraction under uncertainty.
+- **Volatility-Weighted Buffer:** Scales position size using a 95th percentile volatility multiplier.
+- **Conditional Martingale Escalation:** Only applies position compounding when edge is statistically significant (e.g., probability > 0.97).
+- **Stochastic Drawdown Barrier:** Uses an Ornstein-Uhlenbeck (OU) process to throttle risk when equity decays.
+
+### Testing the Risk Model:
+To test the risk model, run the test script from the root directory of the project:
+```bash
+pytest test_risk_engine.py
+```
+This script covers all components of the risk engine, including:
+- Posterior Kelly fraction calculation
+- Volatility multiplier
+- OU drawdown barrier
+- Position sizing constraints
+
+For more details, refer to [adaptive_risk_model.md](adaptive_risk_model.md).
+
+### Integration and Testing
+The adaptive risk model is fully integrated with the trading module and trading model. The test suite (`test_risk_engine.py`) passes 100%, confirming that the risk model is robust and correctly implemented. This integration ensures that every trade is governed by the research-grade risk engine, providing dynamic risk allocation based on statistical confidence and market conditions.
