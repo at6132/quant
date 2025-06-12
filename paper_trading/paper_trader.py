@@ -20,7 +20,7 @@ ACTIONS = {
 
 def main():
     # Load latest model
-    model_path = 'artefacts/lgbm_model.pkl'
+    model_path = 'Algorithm1/artefacts/lgbm_model.pkl'
     if not os.path.exists(model_path):
         print(f"Error: Model not found at {model_path}")
         return
