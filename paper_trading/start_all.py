@@ -10,7 +10,7 @@ def run_webapp():
     app.run(debug=True, port=5000, use_reloader=False)
 
 def run_trader():
-    os.system('python paper_trader.py')
+    os.system('python paper_trading/paper_trader.py')
 
 if __name__ == "__main__":
     try:
