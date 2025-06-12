@@ -58,3 +58,5 @@ joblib
 pandas
 lightgbm 
 pytest
+krakenex
+

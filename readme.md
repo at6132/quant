@@ -43,7 +43,7 @@ python main.py -c config.yaml
 
 ### 4. **Test Models with Paper Trading**
 ```bash
-python "Paper Trading/start_all.py"
+python "paper_trading/start_all.py"
 ```
 - Launches the live paper trading engine and web dashboard
 - Connects to Kraken for live BTC data
