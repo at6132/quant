@@ -1,3 +1,6 @@
+import os
+import json
+
 class Account:
     def __init__(self, initial_capital, fee_rate=0.001, slippage=0.0005):
         self.capital = initial_capital
@@ -5,6 +8,9 @@ class Account:
         self.trade_log = []
         self.fee_rate = fee_rate
         self.slippage = slippage
+        self.analytics_dir = os.path.join(os.path.dirname(__file__), '..', 'analytics')
+        os.makedirs(self.analytics_dir, exist_ok=True)
+        self.analytics_file = os.path.join(self.analytics_dir, 'trades.jsonl')
 
     def open_trade(self, price, size, direction, timestamp, tp_pct=0.01, sl_pct=0.005):
         if size > self.capital:
@@ -43,6 +49,9 @@ class Account:
         }
         self.trade_log.append(trade)
         self.open_positions.remove(pos)
+        # Save trade to analytics
+        with open(self.analytics_file, 'a') as f:
+            f.write(json.dumps(trade) + '\n')
         return trade
 
     def check_tp_sl(self, price, timestamp):

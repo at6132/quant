@@ -10,6 +10,17 @@ from utils import align_features
 import threading
 import pandas as pd
 
+# Action mapping
+ACTION_MAP = {
+    0: 'hold',
+    1: 'open_long',
+    2: 'open_short',
+    3: 'close_long',
+    4: 'close_short',
+    5: 'add_long',
+    6: 'add_short'
+}
+
 class PaperTrader:
     def __init__(self, model_path, initial_capital, webapp_callback=None):
         self.model = joblib.load(model_path)
@@ -30,18 +41,25 @@ class PaperTrader:
         self.pos_counter = 0
 
     def on_new_data(self, features_df):
-        print(f"on_new_data: features_df type: {type(features_df)}")
         if features_df is None or not isinstance(features_df, pd.DataFrame) or features_df.empty:
             return
         X = align_features(features_df, self.model.feature_name())
-        proba = self.model.predict_proba(X)[-1, 1] if hasattr(self.model, 'predict_proba') else self.model.predict(X)[-1]
+        # Get action probabilities
+        if hasattr(self.model, 'predict_proba'):
+            proba_vec = self.model.predict_proba(X)[-1]
+        else:
+            proba_vec = self.model.predict(X)[-1]
+        action_idx = int(proba_vec.argmax())
+        action = ACTION_MAP.get(action_idx, 'hold')
+        action_proba = proba_vec[action_idx]
         price = features_df['close'].iloc[-1]
         timestamp = features_df['timestamp'].iloc[-1] if 'timestamp' in features_df else time.time()
-        signal = 'long' if proba > 0.55 else 'short' if proba < 0.45 else 'flat'
         trade_results = []
+        print(f"[SCAN] Action: {action} (prob={action_proba:.2f}) at price {price}")
         # Check TP/SL for all open positions
         closed = self.account.check_tp_sl(price, timestamp)
         for trade in closed:
+            print(f"[EXEC] Closed position: {trade}")
             self.risk_manager.update_after_trade(trade['net_pnl'])
             trade_results.append(trade)
         # Update holding period for each open position
@@ -53,17 +71,60 @@ class PaperTrader:
             pos_id = id(pos)
             if self.position_holding.get(pos_id, 0) >= self.max_holding_period:
                 trade = self.account.close_trade(pos, price, timestamp, reason='max-hold')
+                print(f"[EXEC] Closed position (max-hold): {trade}")
                 self.risk_manager.update_after_trade(trade['net_pnl'])
                 trade_results.append(trade)
                 self.position_holding.pop(pos_id, None)
-        # Open new position if signal and capital allows (pyramiding)
-        if signal in ['long', 'short']:
-            size = self.risk_manager.get_position_size(proba, self.account)
+        # --- Action logic ---
+        if action == 'open_long':
+            size = self.risk_manager.get_position_size(action_proba, self.account)
             if size > 0 and self.account.capital >= size:
-                opened = self.account.open_trade(price, size, signal, timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
+                opened = self.account.open_trade(price, size, 'long', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
                 if opened:
                     pos = self.account.open_positions[-1]
                     self.position_holding[id(pos)] = 0
+                    print(f"[EXEC] Opened LONG: {size} at {price}")
+        elif action == 'open_short':
+            size = self.risk_manager.get_position_size(action_proba, self.account)
+            if size > 0 and self.account.capital >= size:
+                opened = self.account.open_trade(price, size, 'short', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
+                if opened:
+                    pos = self.account.open_positions[-1]
+                    self.position_holding[id(pos)] = 0
+                    print(f"[EXEC] Opened SHORT: {size} at {price}")
+        elif action == 'add_long':
+            size = self.risk_manager.get_position_size(action_proba, self.account)
+            if size > 0 and self.account.capital >= size:
+                opened = self.account.open_trade(price, size, 'long', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
+                if opened:
+                    pos = self.account.open_positions[-1]
+                    self.position_holding[id(pos)] = 0
+                    print(f"[EXEC] Added LONG: {size} at {price}")
+        elif action == 'add_short':
+            size = self.risk_manager.get_position_size(action_proba, self.account)
+            if size > 0 and self.account.capital >= size:
+                opened = self.account.open_trade(price, size, 'short', timestamp, tp_pct=self.tp_pct, sl_pct=self.sl_pct)
+                if opened:
+                    pos = self.account.open_positions[-1]
+                    self.position_holding[id(pos)] = 0
+                    print(f"[EXEC] Added SHORT: {size} at {price}")
+        elif action == 'close_long':
+            for pos in self.account.open_positions[:]:
+                if pos['direction'] == 'long':
+                    trade = self.account.close_trade(pos, price, timestamp, reason='model-close')
+                    print(f"[EXEC] Closed LONG: {trade}")
+                    self.risk_manager.update_after_trade(trade['net_pnl'])
+                    trade_results.append(trade)
+                    self.position_holding.pop(id(pos), None)
+        elif action == 'close_short':
+            for pos in self.account.open_positions[:]:
+                if pos['direction'] == 'short':
+                    trade = self.account.close_trade(pos, price, timestamp, reason='model-close')
+                    print(f"[EXEC] Closed SHORT: {trade}")
+                    self.risk_manager.update_after_trade(trade['net_pnl'])
+                    trade_results.append(trade)
+                    self.position_holding.pop(id(pos), None)
+        # No action for 'hold'
         if self.webapp_callback:
             self.webapp_callback(self.account, trade_results)
 
