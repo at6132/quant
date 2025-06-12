@@ -3,8 +3,8 @@ import pandas as pd
 from pathlib import Path
 
 def main():
-    src = Path("processed_data/15Second.parquet")
-    dst = Path("sample_data.csv")
+    src = Path("algorithm1/artefacts/artefacts/feature_matrix.parquet")
+    dst = Path("sample_feature_matrix.csv")
     rows = 200
 
     if not src.exists():

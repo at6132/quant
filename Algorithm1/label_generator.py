@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
-from log import logger
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class LabelGenerator:
     def __init__(self, config):
@@ -69,4 +72,31 @@ class LabelGenerator:
                      for i, col in enumerate(df.columns)]
         
         logger.info(f"Generated multi-class labels. Distribution: {df['multi_class_label'].value_counts().to_dict()}")
+        return df 
+
+    def generate_action_labels(self, df):
+        """
+        Generate action-based multi-class labels for open/close/add long/short and hold.
+        0: hold, 1: open long, 2: open short, 3: close long, 4: close short, 5: add to long, 6: add to short
+        """
+        logger.info("Generating action-based multi-class labels...")
+        future_returns = df['close'].shift(-self.lookforward) / df['close'] - 1
+        # Example logic (customize as needed):
+        df['action_label'] = 0  # hold by default
+        # Open long
+        df.loc[future_returns > self.threshold, 'action_label'] = 1
+        # Open short
+        df.loc[future_returns < -self.threshold, 'action_label'] = 2
+        # Add to long (example: very strong move)
+        df.loc[future_returns > 2 * self.threshold, 'action_label'] = 5
+        # Add to short (example: very strong move)
+        df.loc[future_returns < -2 * self.threshold, 'action_label'] = 6
+        # Close long (example: after a run up, price falls back)
+        df.loc[(future_returns < 0) & (df['action_label'] == 1), 'action_label'] = 3
+        # Close short (example: after a run down, price rises back)
+        df.loc[(future_returns > 0) & (df['action_label'] == 2), 'action_label'] = 4
+        df = df.dropna()
+        df.columns = [f"{col}_{i}" if df.columns.tolist().count(col) > 1 else col 
+                     for i, col in enumerate(df.columns)]
+        logger.info(f"Generated action labels. Distribution: {df['action_label'].value_counts().to_dict()}")
         return df 
