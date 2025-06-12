@@ -48,36 +48,51 @@ def dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Paper Trading Dashboard</title>
+        <title>Quant Trading Terminal</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
-            body { background: #f8f9fa; }
+            body { background: #181c20; color: #e0e0e0; font-family: 'Fira Mono', 'Consolas', monospace; }
+            .navbar { background: #101214 !important; }
+            .card { background: #23272b; border: none; box-shadow: 0 2px 16px #000a 0px 2px 8px #00ffe1a0; }
+            .card-title { color: #00ffe1; letter-spacing: 1px; }
+            .glow { color: #00ffe1; text-shadow: 0 0 8px #00ffe1, 0 0 2px #00ffe1; }
+            .ticker { font-size: 2.2rem; font-weight: bold; letter-spacing: 2px; }
+            .ticker-up { color: #00ff99; text-shadow: 0 0 8px #00ff99; }
+            .ticker-down { color: #ff0055; text-shadow: 0 0 8px #ff0055; }
+            .table { background: #23272b; color: #e0e0e0; }
+            .table th, .table td { border-color: #333; }
+            .btn-outline-secondary { border-color: #00ffe1; color: #00ffe1; }
+            .btn-outline-secondary:hover { background: #00ffe1; color: #181c20; }
+            .chartjs-render-monitor { background: #181c20 !important; }
+            .chart-dark { background: #181c20 !important; border-radius: 8px; }
             .card { margin-bottom: 1rem; }
             .table { font-size: 0.95rem; }
+            .scrollable { max-height: 350px; overflow-y: auto; }
         </style>
+        <link href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;700&display=swap" rel="stylesheet">
     </head>
     <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+    <nav class="navbar navbar-expand-lg navbar-dark mb-4">
       <div class="container-fluid">
-        <a class="navbar-brand" href="#">Paper Trading Dashboard</a>
+        <a class="navbar-brand glow" href="#">QUANT TRADING TERMINAL</a>
       </div>
     </nav>
-    <div class="container">
+    <div class="container-fluid">
       <div class="row mb-3">
         <div class="col-md-4">
-          <div class="card text-white bg-primary">
+          <div class="card text-white" style="background: #23272b;">
             <div class="card-body">
               <h5 class="card-title">Live BTC Price</h5>
-              <h3 id="live_price">$N/A</h3>
+              <div class="ticker" id="live_price">$N/A</div>
             </div>
           </div>
         </div>
         <div class="col-md-4">
-          <div class="card text-white bg-success">
+          <div class="card text-white" style="background: #23272b;">
             <div class="card-body">
               <h5 class="card-title">Account Balance</h5>
-              <h3 id="capital">$0.00</h3>
+              <div class="ticker glow" id="capital">$0.00</div>
             </div>
           </div>
         </div>
@@ -90,7 +105,7 @@ def dashboard():
           <div class="card">
             <div class="card-body">
               <h5 class="card-title">Equity Curve</h5>
-              <canvas id="equityCurve"></canvas>
+              <canvas id="equityCurve" class="chart-dark"></canvas>
             </div>
           </div>
         </div>
@@ -98,13 +113,13 @@ def dashboard():
           <div class="card">
             <div class="card-body">
               <h5 class="card-title">Trade Reason Distribution</h5>
-              <canvas id="reasonPie"></canvas>
+              <canvas id="reasonPie" class="chart-dark"></canvas>
             </div>
           </div>
           <div class="card mt-3">
             <div class="card-body">
               <h5 class="card-title">PnL per Trade</h5>
-              <canvas id="pnlBar"></canvas>
+              <canvas id="pnlBar" class="chart-dark"></canvas>
             </div>
           </div>
         </div>
@@ -112,7 +127,7 @@ def dashboard():
       <div class="row mb-3">
         <div class="col-12">
           <div class="card">
-            <div class="card-body">
+            <div class="card-body scrollable">
               <h5 class="card-title">Open Positions</h5>
               <div id="openPositions"></div>
             </div>
@@ -122,7 +137,7 @@ def dashboard():
       <div class="row mb-3">
         <div class="col-12">
           <div class="card">
-            <div class="card-body">
+            <div class="card-body scrollable">
               <h5 class="card-title">Trade Log (last 100)</h5>
               <div id="tradeLog"></div>
             </div>
@@ -132,9 +147,29 @@ def dashboard():
     </div>
     <script>
     let equityChart, reasonChart, pnlChart;
+    let lastPrice = null;
     function updateDashboard() {
       fetch('/data').then(r => r.json()).then(data => {
-        document.getElementById('live_price').innerText = data.live_price ? `$${Number(data.live_price).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}` : 'N/A';
+        // Live price ticker with up/down color
+        let priceElem = document.getElementById('live_price');
+        if (data.live_price) {
+          let price = Number(data.live_price);
+          let priceStr = `$${price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+          if (lastPrice !== null) {
+            if (price > lastPrice) {
+              priceElem.className = 'ticker ticker-up';
+            } else if (price < lastPrice) {
+              priceElem.className = 'ticker ticker-down';
+            } else {
+              priceElem.className = 'ticker';
+            }
+          }
+          priceElem.innerText = priceStr;
+          lastPrice = price;
+        } else {
+          priceElem.className = 'ticker';
+          priceElem.innerText = 'N/A';
+        }
         document.getElementById('capital').innerText = `$${Number(data.capital).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
         // Equity curve
         let equity = [data.capital];
@@ -148,8 +183,8 @@ def dashboard():
         if (!equityChart) {
           equityChart = new Chart(document.getElementById('equityCurve').getContext('2d'), {
             type: 'line',
-            data: { labels: labels, datasets: [{ label: 'Equity', data: equity, borderColor: '#007bff', fill: false }] },
-            options: { responsive: true, plugins: { legend: { display: false } } }
+            data: { labels: labels, datasets: [{ label: 'Equity', data: equity, borderColor: '#00ffe1', backgroundColor: 'rgba(0,255,225,0.1)', fill: true, tension: 0.2, pointRadius: 0 }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#00ffe1' } }, y: { ticks: { color: '#00ffe1' } } }, backgroundColor: '#181c20' }
           });
         } else {
           equityChart.data.labels = labels;
@@ -162,8 +197,8 @@ def dashboard():
         if (!pnlChart) {
           pnlChart = new Chart(document.getElementById('pnlBar').getContext('2d'), {
             type: 'bar',
-            data: { labels: pnlLabels, datasets: [{ label: 'PnL', data: pnls, backgroundColor: '#28a745' }] },
-            options: { responsive: true, plugins: { legend: { display: false } } }
+            data: { labels: pnlLabels, datasets: [{ label: 'PnL', data: pnls, backgroundColor: '#00ff99' }] },
+            options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#00ff99' } }, y: { ticks: { color: '#00ff99' } } }, backgroundColor: '#181c20' }
           });
         } else {
           pnlChart.data.labels = pnlLabels;
@@ -178,8 +213,8 @@ def dashboard():
         if (!reasonChart) {
           reasonChart = new Chart(document.getElementById('reasonPie').getContext('2d'), {
             type: 'pie',
-            data: { labels: reasonLabels, datasets: [{ data: reasonData, backgroundColor: ['#007bff','#dc3545','#ffc107','#28a745','#6c757d','#17a2b8'] }] },
-            options: { responsive: true }
+            data: { labels: reasonLabels, datasets: [{ data: reasonData, backgroundColor: ['#00ffe1','#ff0055','#ffc107','#00ff99','#6c757d','#17a2b8'] }] },
+            options: { responsive: true, plugins: { legend: { labels: { color: '#00ffe1' } } } }
           });
         } else {
           reasonChart.data.labels = reasonLabels;
@@ -187,7 +222,7 @@ def dashboard():
           reasonChart.update();
         }
         // Open positions table
-        let openHtml = '<table class="table table-sm table-striped"><thead><tr>';
+        let openHtml = '<table class="table table-sm table-dark table-striped"><thead><tr>';
         if (data.open_trades.length > 0) {
           Object.keys(data.open_trades[0]).forEach(k => { openHtml += `<th>${k}</th>`; });
           openHtml += '</tr></thead><tbody>';
@@ -202,7 +237,7 @@ def dashboard():
         }
         document.getElementById('openPositions').innerHTML = openHtml;
         // Trade log table
-        let logHtml = '<table class="table table-sm table-striped"><thead><tr>';
+        let logHtml = '<table class="table table-sm table-dark table-striped"><thead><tr>';
         if (data.trade_log.length > 0) {
           Object.keys(data.trade_log[0]).forEach(k => { logHtml += `<th>${k}</th>`; });
           logHtml += '</tr></thead><tbody>';
