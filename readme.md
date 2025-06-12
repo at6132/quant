@@ -57,6 +57,21 @@ python "Paper Trading/start_all.py"
   - Equity curve, PnL per trade, analytics
   - Downloadable trade log
 
+### 5. **Start Everything Together (Web Dashboard + Paper Trading Engine)**
+
+To launch both the web dashboard and the paper trading engine in one step, use the provided script:
+
+```bash
+python paper_trading/start_all.py
+```
+
+- This will start the Flask web dashboard at [http://localhost:5000](http://localhost:5000)
+- It will also start the paper trading engine with $1,000,000 simulated capital, using live market data and your trained model.
+- Both modules run in parallel and communicate for real-time updates.
+- Stop both with `Ctrl+C` in the terminal.
+
+This is the recommended way to run a full end-to-end paper trading simulation with live data, adaptive risk management, and real-time monitoring.
+
 ---
 
 ## Available Indicators
