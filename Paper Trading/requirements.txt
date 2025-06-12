@@ -1,4 +1,0 @@
-flask
-joblib
-pandas
-lightgbm 
