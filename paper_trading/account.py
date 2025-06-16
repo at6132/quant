@@ -208,4 +208,13 @@ class Account:
                 closed.append(self.close_trade(pos, pos['tp'], timestamp, reason='take-profit'))
             elif hit_sl:
                 closed.append(self.close_trade(pos, pos['sl'], timestamp, reason='stop-loss'))
-        return closed 
+        return closed
+
+    def get_total_profit(self) -> float:
+        """Get total profit (realized PnL) since inception."""
+        return sum(trade.get('net_pnl', 0.0) for trade in self.trade_log if 'net_pnl' in trade)
+
+    @property
+    def total_profit(self) -> float:
+        """Property for total profit (realized PnL) since inception."""
+        return self.get_total_profit() 

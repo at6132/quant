@@ -1,12 +1,12 @@
 # Data parameters
 # Merged from config.yaml and config.yml
 
-data_dir: "../processed_data"  # This is where our raw data files are
+data_dir: "C:/Users/Avi/quant/processed_data"  # Updated path with forward slashes
 price_cols: ["open", "high", "low", "close", "volume"]
 timeframes: ["15Second", "1minute", "15minute", "1hour", "4hours"]  # All available timeframes
 
 data:
-  raw_dir: "../processed_data"  # Same as data_dir since that's where our files are
+  raw_dir: "C:/Users/Avi/quant/processed_data"  # Updated path with forward slashes
   processed_dir: "processed_data"  # Where the algorithm will save its processed data
   features_dir: "features"
   symbol: "BTCUSDT"
@@ -21,7 +21,7 @@ data:
 
 # Feature engineering parameters
 feature_engineering:
-  rolling_windows: [5, 10, 20, 50, 100, 200, 500]  # Extended windows for better feature capture
+  rolling_windows: [10, 20, 50, 100, 200, 500, 1000]  # Extended windows
   cross_indicator_pairs:
     - ["rsi", "macd"]
     - ["volume", "close"]
@@ -33,16 +33,14 @@ feature_engineering:
   time_features: ["hour", "minute", "day_of_week", "day_of_month", "month", "quarter"]
 
 # Label generation parameters
-label_generation:
-  min_move_size: 0.3  # Reduced for 15s timeframe
-  max_holding_time: 15  # Reduced for 15s timeframe
-  min_holding_time: 1  # Minimum holding time in minutes
-  stop_loss: 0.2  # Tighter stop loss for 15s
-  take_profit: 0.4  # Adjusted take profit for 15s
-
 labeling:
-  threshold: 0.001  # 0.1% return threshold for binary classification
-  lookforward: 10   # Number of periods to look forward for label generation
+  threshold: 0.002  # Increased to 0.2% for more significant moves
+  lookforward: 30   # Increased to 30 periods for better prediction horizon
+  min_move_size: 0.002  # Aligned with threshold
+  max_holding_time: 30  # Aligned with lookforward
+  min_holding_time: 5   # Minimum holding time in periods
+  stop_loss: 0.003     # 0.3% stop loss
+  take_profit: 0.006   # 0.6% take profit
 
 features:
   technical_indicators:
@@ -71,68 +69,69 @@ features:
     - month
     - quarter
 
-# Model parameters
+# Model parameters - Using only TFT for better sequence modeling
 models:
-  lgbm:
-    n_trials: 200  # Significantly increased trials for better optimization
-    num_leaves: [31, 63, 127]  # Multiple options for optimization
-    learning_rate: [0.001, 0.01, 0.05, 0.1]  # Wider range of learning rates
-    n_estimators: [500, 1000, 2000]  # Increased for better performance
-    max_depth: [6, 8, 10, 12]  # Multiple depth options
-    min_child_samples: [10, 20, 50]  # Multiple options
-    subsample: [0.6, 0.8, 0.9]  # Multiple options
-    colsample_bytree: [0.6, 0.8, 0.9]  # Multiple options
-    reg_alpha: [0.01, 0.1, 1.0]  # Multiple options
-    reg_lambda: [0.01, 0.1, 1.0]  # Multiple options
-    random_state: 42
-    n_jobs: -1
-    validation_size: 2000  # Increased validation size
-    early_stopping_rounds: 50
-    verbose: 100
   tft:
-    learning_rate: [0.0001, 0.001, 0.01]  # Multiple options
-    hidden_size: [64, 128, 256]  # Multiple options
-    attention_head_size: [4, 8, 16]  # Multiple options
-    dropout: [0.1, 0.2, 0.3]  # Multiple options
-    hidden_continuous_size: [32, 64, 128]  # Multiple options
-    max_epochs: 100  # Significantly increased epochs
-    batch_size: [64, 128, 256]  # Multiple options
-    encoder_length: [48, 96, 192]  # Multiple options
-    validation_size: 2000
+    learning_rate: 0.0001  # Reduced learning rate
+    hidden_size: 256      # Increased hidden size
+    attention_head_size: 8
+    dropout: 0.2
+    hidden_continuous_size: 128
+    max_epochs: 200       # Increased epochs
+    batch_size: 1024      # Increased batch size
+    encoder_length: 200   # Increased encoder length
+    validation_size: 5000 # Increased validation size
     params:
       loss: "quantile"
     train:
-      max_epochs: 100
-      batch_size: [64, 128, 256]
-      validation_size: 2000
+      max_epochs: 200
+      batch_size: 1024
+      validation_size: 5000
       random_state: 42
-      patience: 20  # Early stopping patience
-      gradient_clip_val: 1.0
-      accumulate_grad_batches: 2
-
-# Rule mining parameters
-rule_mining:
-  max_rules: 500  # Increased for more comprehensive rule set
-  min_support: 0.005  # Lowered for more rules
-  min_confidence: 0.4  # Adjusted for better balance
-  max_indicators: 3  # Increased for more complex rules
-  max_combinations: 500  # Increased for more combinations
-  min_precision: 0.4  # Adjusted for better balance
-  min_recall: 0.4  # Adjusted for better balance
+      patience: 10        # Early stopping patience
+      gradient_clip_val: 0.1
+      accumulate_grad_batches: 4
 
 # Backtesting parameters
 backtesting:
-  n_splits: 10  # Increased for more robust validation
+  n_splits: 10
   initial_capital: 100000
-  transaction_cost: 0.001  # Added transaction cost
-  slippage: 0.0005  # Added slippage
+  transaction_cost: 0.001
+  slippage: 0.0005
+  commission: 0.001
+  min_trades: 100
+  max_drawdown: 0.2
 
 # Logging parameters
 logging:
   level: "INFO"
   file: "logs/trading.log"
-  tensorboard: true  # Added tensorboard logging
-  wandb: true  # Added Weights & Biases logging
+  tensorboard: true
+  wandb: true
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "sharpe_ratio"
+    - "max_drawdown"
+    - "win_rate"
+    - "profit_factor"
+
+# Model saving parameters
+model:
+  models_dir: "models"
+  save_best_only: true
+  monitor: "val_loss"
+  mode: "min"
+  save_top_k: 3
+  every_n_epochs: 1
+  save_last: true
+  version: "1.0.0"
+  metadata:
+    framework: "pytorch"
+    model_type: "tft"
+    trading_mode: "paper"
 
 # Label parameters
 label:
@@ -140,11 +139,92 @@ label:
   threshold: 0.001
   dollar_threshold: 10
 
-model:
-  models_dir: "models"
-  save_best_only: true
-  monitor: "val_loss"
-  mode: "min"
-  save_top_k: 3  # Save top 3 models
-  every_n_epochs: 1
-  save_last: true 
+monitoring:
+  # Logging settings
+  log_level: "INFO"
+  log_file: "logs/trading.log"
+  metrics_file: "logs/metrics.json"
+  
+  # Alert thresholds
+  risk_limits:
+    max_drawdown: 0.05  # 5% max drawdown
+    max_position_size: 0.20  # 20% of capital
+    max_daily_loss: 0.02  # 2% daily loss
+    max_leverage: 3.0  # Maximum leverage
+    min_sharpe: 1.0  # Minimum Sharpe ratio
+    max_correlation: 0.7  # Maximum correlation with market
+    
+  # Performance monitoring
+  performance:
+    lookback_period: 20  # Days to look back for performance metrics
+    min_win_rate: 0.45  # Minimum win rate
+    min_profit_factor: 1.2  # Minimum profit factor
+    max_drawdown_duration: 10  # Maximum drawdown duration in days
+    
+  # Regime detection
+  regime:
+    volatility_threshold: 0.02  # 2% volatility threshold
+    correlation_threshold: 0.5  # Correlation threshold
+    min_samples: 100  # Minimum samples for regime detection
+    
+  # Alert channels
+  alerts:
+    email:
+      enabled: true
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      sender_email: ""  # Add your email
+      sender_password: ""  # Add your app password
+      recipient_emails: []  # Add recipient emails
+      
+    slack:
+      enabled: false
+      webhook_url: ""  # Add your Slack webhook URL
+      
+  # Reporting
+  reporting:
+    daily_report_time: "23:00"  # Time to generate daily report
+    report_metrics:
+      - "returns"
+      - "sharpe_ratio"
+      - "drawdown"
+      - "win_rate"
+      - "profit_factor"
+      - "position_sizes"
+      - "risk_metrics"
+
+portfolio_analytics:
+  risk_free_rate: 0.02  # Annual risk-free rate
+  benchmark: "BTC-USD"  # Benchmark symbol for performance comparison
+  metrics:
+    storage_duration: 86400  # 24 hours in seconds
+    report_duration: 2592000  # 30 days in seconds
+    max_returns_history: 1000  # Maximum number of returns to store
+  risk_limits:
+    max_leverage: 3.0
+    min_margin_level: 150.0  # Percentage
+    max_drawdown: 0.15  # 15%
+    max_var_95: 0.02  # 2% daily VaR
+  performance_thresholds:
+    min_sharpe: 1.0
+    min_sortino: 1.5
+    min_information_ratio: 0.5
+    min_win_rate: 0.5
+    min_profit_factor: 1.5
+  reporting:
+    daily_report_time: "23:59:59"
+    metrics_to_track:
+      - total_value
+      - daily_pnl
+      - daily_return
+      - sharpe_ratio
+      - sortino_ratio
+      - max_drawdown
+      - win_rate
+      - profit_factor
+      - leverage
+      - margin_level
+      - var_95
+      - cvar_95
+      - information_ratio
+      - tracking_error 

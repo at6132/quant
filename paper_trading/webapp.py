@@ -1,304 +1,389 @@
-from flask import Flask, render_template_string, jsonify, send_file
+import logging
 import threading
-import io
-import pandas as pd
-import json
 import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Union
+import yaml
+import redis
+import json
+from flask import Flask, render_template, jsonify, request
+from flask_socketio import SocketIO
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
+import numpy as np
+from pathlib import Path
+from paper_trading.trading_loop import TradingLoop
 
+# Initialize Flask app
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your-secret-key-here'
+socketio = SocketIO(app)
 
-# Shared state for the web app
-state = {
-    'capital': 1_000_000,
-    'trade_log': [],
-    'open_trades': [],
-    'live_price': None,
-    'last_update': time.time()
-}
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-def update_state(account, trade_result):
-    state['capital'] = account.get_capital()
-    state['trade_log'] = account.get_trade_log()
-    state['open_trades'] = account.get_open_trades()
-    state['last_update'] = time.time()
+class WebApp:
+    def __init__(self, config: Union[str, Dict] = "paper_trading_config.yaml"):
+        """Initialize webapp with configuration
+        
+        Args:
+            config: Either a path to the config file or a config dictionary
+        """
+        if isinstance(config, str):
+            with open(config, 'r') as f:
+                self.config = yaml.safe_load(f)
+        else:
+            self.config = config
+            
+        # Load settings
+        self.webapp_settings = self.config.get('webapp', {})
+        self.monitoring_settings = self.config.get('monitoring', {})
+        
+        # Initialize Flask app
+        self.app = Flask(__name__)
+        self.app.config['SECRET_KEY'] = 'your-secret-key'  # Change this in production
+        
+        # Initialize Redis connection
+        self.redis_client = redis.Redis(
+            host=self.monitoring_settings.get('redis', {}).get('host', 'localhost'),
+            port=self.monitoring_settings.get('redis', {}).get('port', 6379),
+            db=self.monitoring_settings.get('redis', {}).get('db', 0)
+        )
+        
+        # Initialize state
+        self.running = False
+        self.trading_loop = None
+        
+        # Set up routes
+        self._setup_routes()
+        
+        logger.info("Webapp initialized")
+        
+    def _setup_routes(self):
+        """Set up Flask routes"""
+        @self.app.route('/')
+        def index():
+            """Render the main dashboard."""
+            return render_template('index.html')
+            
+        @self.app.route('/api/portfolio')
+        def get_portfolio():
+            """Get latest portfolio metrics"""
+            try:
+                # Get latest portfolio metrics
+                metrics = self.redis_client.hgetall('portfolio_metrics')
+                if metrics:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in metrics.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting portfolio data: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/performance')
+        def get_performance():
+            """Get latest performance metrics"""
+            try:
+                # Get latest performance metrics
+                metrics = self.redis_client.hgetall('metrics')
+                if metrics:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in metrics.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting performance data: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/alerts')
+        def get_alerts():
+            """Get latest alerts"""
+            try:
+                # Get latest alerts
+                alerts = self.redis_client.hgetall('alerts')
+                if alerts:
+                    data = [
+                        json.loads(v)
+                        for k, v in sorted(alerts.items(), key=lambda x: x[0].decode())
+                    ]
+                    return jsonify(data)
+                    
+                return jsonify([])
+                
+            except Exception as e:
+                logger.error("Error getting alerts: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/metrics')
+        def get_metrics():
+            """Get latest metrics"""
+            try:
+                # Get latest metrics
+                metrics = self.redis_client.hgetall('metrics')
+                if metrics:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in metrics.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting metrics: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/trades')
+        def get_trades():
+            """Get latest trades"""
+            try:
+                # Get latest trades
+                trades = self.redis_client.hgetall('trades')
+                if trades:
+                    data = [
+                        json.loads(v)
+                        for k, v in sorted(trades.items(), key=lambda x: x[0].decode())
+                    ]
+                    return jsonify(data)
+                    
+                return jsonify([])
+                
+            except Exception as e:
+                logger.error("Error getting trades: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/positions')
+        def get_positions():
+            """Get current positions"""
+            try:
+                # Get current positions
+                positions = self.redis_client.hgetall('positions')
+                if positions:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in positions.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting positions: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/market_data')
+        def get_market_data():
+            """Get latest market data"""
+            try:
+                # Get latest market data
+                market_data = self.redis_client.hgetall('market_data')
+                if market_data:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in market_data.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting market data: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/indicators')
+        def get_indicators():
+            """Get latest indicators"""
+            try:
+                # Get latest indicators
+                indicators = self.redis_client.hgetall('indicators')
+                if indicators:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in indicators.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting indicators: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+        @self.app.route('/api/signals')
+        def get_signals():
+            """Get latest signals"""
+            try:
+                # Get latest signals
+                signals = self.redis_client.hgetall('signals')
+                if signals:
+                    data = {
+                        k.decode(): json.loads(v)
+                        for k, v in signals.items()
+                    }
+                    return jsonify(data)
+                    
+                return jsonify({})
+                
+            except Exception as e:
+                logger.error("Error getting signals: %s", str(e))
+                return jsonify({'error': str(e)}), 500
+                
+    def start(self):
+        """Start the webapp"""
+        if self.running:
+            logger.warning("Webapp is already running")
+            return
+            
+        try:
+            # Initialize trading loop
+            self.trading_loop = TradingLoop(self.config)
+            
+            # Start trading loop in a separate thread
+            self.trading_thread = threading.Thread(target=self.trading_loop.start)
+            self.trading_thread.daemon = True
+            self.trading_thread.start()
+            
+            # Start Flask app
+            self.app.run(
+                host=self.webapp_settings.get('host', '0.0.0.0'),
+                port=self.webapp_settings.get('port', 5000),
+                debug=self.webapp_settings.get('debug', False)
+            )
+            
+            self.running = True
+            logger.info("Webapp started")
+            
+        except Exception as e:
+            logger.error("Error starting webapp: %s", str(e))
+            self.stop()
+            raise
+            
+    def stop(self):
+        """Stop the webapp"""
+        if not self.running:
+            logger.warning("Webapp is not running")
+            return
+            
+        try:
+            # Stop trading loop
+            if self.trading_loop:
+                self.trading_loop.stop()
+                
+            self.running = False
+            logger.info("Webapp stopped")
+            
+        except Exception as e:
+            logger.error("Error stopping webapp: %s", str(e))
+            raise
 
-def set_live_price(price):
-    state['live_price'] = price
-    state['last_update'] = time.time()
+def load_config(config_path: str = "paper_trading_config.yaml") -> Dict:
+    """Load configuration from YAML file"""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
 
-@app.route('/data')
-def data():
-    # Add timestamp to help with debugging
-    return jsonify({
-        'capital': state['capital'],
-        'trade_log': state['trade_log'][-100:],
-        'open_trades': state['open_trades'],
-        'live_price': state['live_price'],
-        'last_update': state['last_update']
-    })
+def get_redis_connection(config: Dict) -> redis.Redis:
+    """Create Redis connection"""
+    return redis.Redis(
+        host=config['monitoring']['redis']['host'],
+        port=config['monitoring']['redis']['port'],
+        db=config['monitoring']['redis']['db']
+    )
 
-@app.route('/download_trades')
-def download_trades():
-    df = pd.DataFrame(state['trade_log'])
-    buf = io.StringIO()
-    df.to_csv(buf, index=False)
-    buf.seek(0)
-    return send_file(io.BytesIO(buf.getvalue().encode()), mimetype='text/csv', as_attachment=True, download_name='trade_log.csv')
+def start_webapp(config_path: str = "paper_trading_config.yaml"):
+    """Start the Flask web application"""
+    try:
+        config = load_config(config_path)
+        app.config['config'] = config
+        
+        host = config['webapp']['host']
+        port = config['webapp']['port']
+        debug = config['webapp']['debug']
+        
+        logger.info("Starting web application on %s:%d", host, port)
+        app.run(host=host, port=port, debug=debug)
+        
+    except Exception as e:
+        logger.error("Error starting web application: %s", str(e))
+        raise
 
-@app.route('/')
-def dashboard():
-    html = '''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Quant Trading Terminal</title>
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <style>
-            body { background: #181c20; color: #e0e0e0; font-family: 'Fira Mono', 'Consolas', monospace; }
-            .navbar { background: #101214 !important; }
-            .card { background: #23272b; border: none; box-shadow: 0 2px 16px #000a 0px 2px 8px #00ffe1a0; }
-            .card-title { color: #00ffe1; letter-spacing: 1px; }
-            .glow { color: #00ffe1; text-shadow: 0 0 8px #00ffe1, 0 0 2px #00ffe1; }
-            .ticker { font-size: 2.2rem; font-weight: bold; letter-spacing: 2px; }
-            .ticker-up { color: #00ff99; text-shadow: 0 0 8px #00ff99; }
-            .ticker-down { color: #ff0055; text-shadow: 0 0 8px #ff0055; }
-            .table { background: #23272b; color: #e0e0e0; }
-            .table th, .table td { border-color: #333; }
-            .btn-outline-secondary { border-color: #00ffe1; color: #00ffe1; }
-            .btn-outline-secondary:hover { background: #00ffe1; color: #181c20; }
-            .chartjs-render-monitor { background: #181c20 !important; }
-            .chart-dark { background: #181c20 !important; border-radius: 8px; }
-            .card { margin-bottom: 1rem; }
-            .table { font-size: 0.95rem; }
-            .scrollable { max-height: 350px; overflow-y: auto; }
-            .status { font-size: 0.8rem; color: #666; }
-        </style>
-        <link href="https://fonts.googleapis.com/css2?family=Fira+Mono:wght@400;700&display=swap" rel="stylesheet">
-    </head>
-    <body>
-    <nav class="navbar navbar-expand-lg navbar-dark mb-4">
-      <div class="container-fluid">
-        <a class="navbar-brand glow" href="#">QUANT TRADING TERMINAL</a>
-        <span class="status" id="status">Connecting...</span>
-      </div>
-    </nav>
-    <div class="container-fluid">
-      <div class="row mb-3">
-        <div class="col-md-4">
-          <div class="card text-white" style="background: #23272b;">
-            <div class="card-body">
-              <h5 class="card-title">Live BTC Price</h5>
-              <div class="ticker" id="live_price">$N/A</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="card text-white" style="background: #23272b;">
-            <div class="card-body">
-              <h5 class="card-title">Account Balance</h5>
-              <div class="ticker glow" id="capital">$0.00</div>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4 d-flex align-items-center">
-          <a href="/download_trades" class="btn btn-outline-secondary w-100">Download Trade Log (CSV)</a>
-        </div>
-      </div>
-      <div class="row mb-3">
-        <div class="col-md-8">
-          <div class="card">
-            <div class="card-body">
-              <h5 class="card-title">Equity Curve</h5>
-              <canvas id="equityCurve" class="chart-dark"></canvas>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-4">
-          <div class="card">
-            <div class="card-body">
-              <h5 class="card-title">Trade Reason Distribution</h5>
-              <canvas id="reasonPie" class="chart-dark"></canvas>
-            </div>
-          </div>
-          <div class="card mt-3">
-            <div class="card-body">
-              <h5 class="card-title">PnL per Trade</h5>
-              <canvas id="pnlBar" class="chart-dark"></canvas>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="row mb-3">
-        <div class="col-12">
-          <div class="card">
-            <div class="card-body scrollable">
-              <h5 class="card-title">Open Positions</h5>
-              <div id="openPositions"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="row mb-3">
-        <div class="col-12">
-          <div class="card">
-            <div class="card-body scrollable">
-              <h5 class="card-title">Trade Log (last 100)</h5>
-              <div id="tradeLog"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <script>
-    let equityChart, reasonChart, pnlChart;
-    let lastPrice = null;
-    let lastUpdate = null;
+def emit_updates():
+    """Emit real-time updates to connected clients."""
+    try:
+        # Get latest data from Redis
+        metrics = json.loads(redis_client.get('portfolio_metrics') or '{}')
+        positions = json.loads(redis_client.get('current_positions') or '{}')
+        trades = json.loads(redis_client.get('recent_trades') or '[]')
+        alerts = json.loads(redis_client.get('recent_alerts') or '[]')
+        
+        # Emit updates through WebSocket
+        socketio.emit('metrics_update', metrics)
+        socketio.emit('positions_update', positions)
+        socketio.emit('trades_update', trades)
+        socketio.emit('alerts_update', alerts)
+    except Exception as e:
+        logger.error(f"Error emitting updates: {str(e)}")
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection."""
+    logger.info('Client connected')
+    emit_updates()
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection."""
+    logger.info('Client disconnected')
+
+@app.route('/api/report', methods=['GET'])
+def get_daily_report():
+    """Get daily performance report"""
+    try:
+        config = load_config()
+        redis_client = get_redis_connection(config)
+        
+        # Get today's metrics
+        today = datetime.now().date()
+        metrics = []
+        
+        for key in redis_client.hkeys("metrics"):
+            metric = json.loads(redis_client.hget("metrics", key))
+            metric_date = datetime.fromisoformat(metric['timestamp']).date()
+            
+            if metric_date == today:
+                metrics.append(metric)
+                
+        if not metrics:
+            return jsonify({})
+            
+        # Calculate daily statistics
+        latest_metric = metrics[-1]
+        
+        report = {
+            'date': today.isoformat(),
+            'portfolio_value': latest_metric['portfolio_value'],
+            'risk_metrics': latest_metric['risk_metrics'],
+            'performance_metrics': latest_metric['performance_metrics'],
+            'trade_statistics': latest_metric['trade_statistics'],
+            'pnl_metrics': latest_metric['pnl_metrics']
+        }
+        
+        return jsonify(report)
+        
+    except Exception as e:
+        logger.error("Error getting daily report: %s", str(e))
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    webapp = WebApp()
+    webapp.start() 
     
-    function updateStatus(data) {
-        const now = Date.now() / 1000;
-        const statusElem = document.getElementById('status');
-        if (data.last_update) {
-            const age = now - data.last_update;
-            if (age < 5) {
-                statusElem.textContent = 'Connected';
-                statusElem.style.color = '#00ff99';
-            } else {
-                statusElem.textContent = `Last update ${Math.round(age)}s ago`;
-                statusElem.style.color = '#ff0055';
-            }
-        }
-    }
-    
-    function updateDashboard() {
-      fetch('/data').then(r => r.json()).then(data => {
-        updateStatus(data);
-        
-        // Live price ticker with up/down color
-        let priceElem = document.getElementById('live_price');
-        if (data.live_price) {
-          let price = Number(data.live_price);
-          let priceStr = `$${price.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
-          if (lastPrice !== null) {
-            if (price > lastPrice) {
-              priceElem.className = 'ticker ticker-up';
-            } else if (price < lastPrice) {
-              priceElem.className = 'ticker ticker-down';
-            } else {
-              priceElem.className = 'ticker';
-            }
-          }
-          priceElem.innerText = priceStr;
-          lastPrice = price;
-        } else {
-          priceElem.className = 'ticker';
-          priceElem.innerText = 'N/A';
-        }
-        
-        document.getElementById('capital').innerText = `$${Number(data.capital).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`;
-        
-        // Equity curve
-        let equity = [data.capital];
-        if (data.trade_log && data.trade_log.length > 0) {
-          equity = [data.trade_log[0].capital];
-          for (let i = 1; i < data.trade_log.length; i++) {
-            equity.push(data.trade_log[i].capital);
-          }
-        }
-        let labels = equity.map((_, i) => i+1);
-        if (!equityChart) {
-          equityChart = new Chart(document.getElementById('equityCurve').getContext('2d'), {
-            type: 'line',
-            data: { labels: labels, datasets: [{ label: 'Equity', data: equity, borderColor: '#00ffe1', backgroundColor: 'rgba(0,255,225,0.1)', fill: true, tension: 0.2, pointRadius: 0 }] },
-            options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#00ffe1' } }, y: { ticks: { color: '#00ffe1' } } }, backgroundColor: '#181c20' }
-          });
-        } else {
-          equityChart.data.labels = labels;
-          equityChart.data.datasets[0].data = equity;
-          equityChart.update();
-        }
-        
-        // PnL per trade
-        if (data.trade_log && data.trade_log.length > 0) {
-          let pnls = data.trade_log.map(t => t.net_pnl || 0);
-          let pnlLabels = data.trade_log.map((t, i) => i+1);
-          if (!pnlChart) {
-            pnlChart = new Chart(document.getElementById('pnlBar').getContext('2d'), {
-              type: 'bar',
-              data: { labels: pnlLabels, datasets: [{ label: 'PnL', data: pnls, backgroundColor: '#00ff99' }] },
-              options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#00ff99' } }, y: { ticks: { color: '#00ff99' } } }, backgroundColor: '#181c20' }
-            });
-          } else {
-            pnlChart.data.labels = pnlLabels;
-            pnlChart.data.datasets[0].data = pnls;
-            pnlChart.update();
-          }
-          
-          // Trade reason pie
-          let reasonCounts = {};
-          data.trade_log.forEach(t => { reasonCounts[t.reason] = (reasonCounts[t.reason]||0)+1; });
-          let reasonLabels = Object.keys(reasonCounts);
-          let reasonData = Object.values(reasonCounts);
-          if (!reasonChart) {
-            reasonChart = new Chart(document.getElementById('reasonPie').getContext('2d'), {
-              type: 'pie',
-              data: { labels: reasonLabels, datasets: [{ data: reasonData, backgroundColor: ['#00ffe1','#ff0055','#ffc107','#00ff99','#6c757d','#17a2b8'] }] },
-              options: { responsive: true, plugins: { legend: { labels: { color: '#00ffe1' } } } }
-            });
-          } else {
-            reasonChart.data.labels = reasonLabels;
-            reasonChart.data.datasets[0].data = reasonData;
-            reasonChart.update();
-          }
-        }
-        
-        // Open positions table
-        let openHtml = '<table class="table table-sm table-dark table-striped"><thead><tr>';
-        if (data.open_trades && data.open_trades.length > 0) {
-          Object.keys(data.open_trades[0]).forEach(k => { openHtml += `<th>${k}</th>`; });
-          openHtml += '</tr></thead><tbody>';
-          data.open_trades.forEach(pos => {
-            openHtml += '<tr>';
-            Object.values(pos).forEach(v => { openHtml += `<td>${v}</td>`; });
-            openHtml += '</tr>';
-          });
-          openHtml += '</tbody></table>';
-        } else {
-          openHtml = '<p>No open positions.</p>';
-        }
-        document.getElementById('openPositions').innerHTML = openHtml;
-        
-        // Trade log table
-        let logHtml = '<table class="table table-sm table-dark table-striped"><thead><tr>';
-        if (data.trade_log && data.trade_log.length > 0) {
-          Object.keys(data.trade_log[0]).forEach(k => { logHtml += `<th>${k}</th>`; });
-          logHtml += '</tr></thead><tbody>';
-          data.trade_log.forEach(trade => {
-            logHtml += '<tr>';
-            Object.values(trade).forEach(v => { logHtml += `<td>${v}</td>`; });
-            logHtml += '</tr>';
-          });
-          logHtml += '</tbody></table>';
-        } else {
-          logHtml = '<p>No trades yet.</p>';
-        }
-        document.getElementById('tradeLog').innerHTML = logHtml;
-      });
-    }
-    
-    // Update every 2 seconds
-    setInterval(updateDashboard, 2000);
-    updateDashboard();
-    </script>
-    </body>
-    </html>
-    '''
-    return render_template_string(html)
-
-def run_webapp():
-    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
-
-if __name__ == "__main__":
-    run_webapp() 

@@ -18,7 +18,10 @@ from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 from pytorch_forecasting.metrics import CrossEntropy
 from pytorch_forecasting.data.encoders import GroupNormalizer
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import wandb
 
 # Set up logging
 logging.basicConfig(
@@ -27,7 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def load_config(config_path: str) -> dict:
+def load_config(config_path: str) -> Dict:
     """Load configuration from YAML file."""
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
@@ -166,25 +169,31 @@ def plot_pnl_curves(pnl, output_dir):
         print(f"{stat}: {value:.2f}")
     return stats
 
-def train_tft_model(df, cfg, output_dir, X_train_idx, X_test_idx):
-    # Prepare data
+def prepare_data(df: pd.DataFrame, cfg: Dict) -> Tuple[TimeSeriesDataSet, TimeSeriesDataSet]:
+    """Prepare data for TFT model training."""
+    logger.info("Preparing data for TFT model...")
+    
+    # Add time index and group ID
     df = df.copy()
     df['time_idx'] = np.arange(len(df))
     df['group_id'] = 0  # single group
-    df['label'] = df['action_label'].astype(int)
-    # Use only numeric features
-    numeric_features = [col for col in df.columns if df[col].dtype in [np.float32, np.float64, np.int32, np.int64] and col not in ['time_idx', 'group_id', 'label']]
-    # Split
-    train_df = df.iloc[X_train_idx]
-    test_df = df.iloc[X_test_idx]
-    # Create TimeSeriesDataSet
+    
+    # Get feature columns
+    feature_cols = [col for col in df.columns if col not in ['time_idx', 'group_id', 'action_label', 'label']]
+    
+    # Split data
+    train_size = int(len(df) * 0.8)
+    train_df = df.iloc[:train_size]
+    val_df = df.iloc[train_size:]
+    
+    # Create training dataset
     training = TimeSeriesDataSet(
         train_df,
         time_idx="time_idx",
-        target="label",
+        target="action_label",
         group_ids=["group_id"],
-        min_encoder_length=cfg['ml']['tft']['encoder_length'],
-        max_encoder_length=cfg['ml']['tft']['encoder_length'],
+        min_encoder_length=cfg['models']['tft']['encoder_length'],
+        max_encoder_length=cfg['models']['tft']['encoder_length'],
         min_prediction_length=1,
         max_prediction_length=1,
         static_categoricals=[],
@@ -192,40 +201,142 @@ def train_tft_model(df, cfg, output_dir, X_train_idx, X_test_idx):
         time_varying_known_categoricals=[],
         time_varying_known_reals=["time_idx"],
         time_varying_unknown_categoricals=[],
-        time_varying_unknown_reals=numeric_features,
+        time_varying_unknown_reals=feature_cols,
         target_normalizer=GroupNormalizer(),
         add_relative_time_idx=True,
         add_target_scales=True,
         add_encoder_length=True,
-        target_dtype=torch.long,
     )
-    validation = TimeSeriesDataSet.from_dataset(training, test_df, predict=True)
-    train_dataloader = training.to_dataloader(train=True, batch_size=cfg['ml']['tft']['batch_size'], num_workers=0)
-    val_dataloader = validation.to_dataloader(train=False, batch_size=cfg['ml']['tft']['batch_size'], num_workers=0)
+    
+    # Create validation dataset
+    validation = TimeSeriesDataSet.from_dataset(training, val_df, predict=True)
+    
+    return training, validation
+
+def train_tft_model(training: TimeSeriesDataSet, validation: TimeSeriesDataSet, cfg: Dict) -> Tuple[TemporalFusionTransformer, pl.Trainer]:
+    """Train TFT model with improved configuration."""
+    logger.info("Training TFT model...")
+    
+    # Create dataloaders
+    train_dataloader = training.to_dataloader(
+        train=True,
+        batch_size=cfg['models']['tft']['batch_size'],
+        num_workers=0
+    )
+    val_dataloader = validation.to_dataloader(
+        train=False,
+        batch_size=cfg['models']['tft']['batch_size'],
+        num_workers=0
+    )
+    
+    # Initialize model
     tft = TemporalFusionTransformer.from_dataset(
         training,
-        learning_rate=cfg['ml']['tft']['learning_rate'],
-        hidden_size=cfg['ml']['tft']['hidden_size'],
-        attention_head_size=cfg['ml']['tft']['attention_head_size'],
-        dropout=cfg['ml']['tft']['dropout'],
-        hidden_continuous_size=cfg['ml']['tft']['hidden_continuous_size'],
+        learning_rate=cfg['models']['tft']['learning_rate'],
+        hidden_size=cfg['models']['tft']['hidden_size'],
+        attention_head_size=cfg['models']['tft']['attention_head_size'],
+        dropout=cfg['models']['tft']['dropout'],
+        hidden_continuous_size=cfg['models']['tft']['hidden_continuous_size'],
         loss=CrossEntropy(),
         log_interval=10,
         reduce_on_plateau_patience=4
     )
+    
+    # Set up logging
+    loggers = []
+    if cfg['logging']['tensorboard']:
+        loggers.append(TensorBoardLogger("logs/"))
+    if cfg['logging']['wandb']:
+        wandb_logger = WandbLogger(project="trading_model")
+        loggers.append(wandb_logger)
+    
+    # Set up callbacks
+    callbacks = [
+        EarlyStopping(
+            monitor="val_loss",
+            patience=cfg['models']['tft']['train']['patience'],
+            mode="min"
+        ),
+        ModelCheckpoint(
+            dirpath=cfg['model']['models_dir'],
+            filename="tft-{epoch:02d}-{val_loss:.2f}",
+            save_top_k=cfg['model']['save_top_k'],
+            monitor="val_loss",
+            mode="min"
+        )
+    ]
+    
+    # Initialize trainer
     trainer = pl.Trainer(
-        max_epochs=cfg['ml']['tft']['max_epochs'],
+        max_epochs=cfg['models']['tft']['max_epochs'],
         accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         devices=1,
-        gradient_clip_val=0.1,
-        callbacks=[EarlyStopping(monitor='val_loss', patience=5, mode='min')]
+        gradient_clip_val=cfg['models']['tft']['train']['gradient_clip_val'],
+        callbacks=callbacks,
+        logger=loggers,
+        accumulate_grad_batches=cfg['models']['tft']['train']['accumulate_grad_batches']
     )
+    
+    # Train model
     trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+    
+    return tft, trainer
+
+def evaluate_model(model: TemporalFusionTransformer, val_dataloader: torch.utils.data.DataLoader) -> Dict:
+    """Evaluate model performance."""
+    logger.info("Evaluating model...")
+    
+    # Get predictions
+    predictions = model.predict(val_dataloader)
+    actuals = torch.cat([y for x, y in val_dataloader])
+    
+    # Calculate metrics
+    metrics = {
+        "accuracy": accuracy_score(actuals, predictions),
+        "precision": precision_score(actuals, predictions, average='weighted'),
+        "recall": recall_score(actuals, predictions, average='weighted'),
+        "f1_score": f1_score(actuals, predictions, average='weighted')
+    }
+    
+    logger.info("Model evaluation metrics:")
+    for metric, value in metrics.items():
+        logger.info(f"{metric}: {value:.4f}")
+    
+    return metrics
+
+def save_model_artifacts(model: TemporalFusionTransformer, trainer: pl.Trainer, metrics: Dict, cfg: Dict):
+    """Save model artifacts and metadata."""
+    logger.info("Saving model artifacts...")
+    
+    # Create artifacts directory
+    artifacts_dir = Path("artefacts")
+    artifacts_dir.mkdir(exist_ok=True)
+    
     # Save model
-    tft_path = Path(output_dir) / "tft_model.ckpt"
-    tft.save(tft_path)
-    logger.info(f"Saved TFT model to {tft_path}")
-    return tft, test_df, val_dataloader
+    model_path = artifacts_dir / "tft_model.ckpt"
+    trainer.save_checkpoint(model_path)
+    
+    # Save metadata
+    metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "model_type": "tft",
+        "version": cfg['model']['version'],
+        "metrics": metrics,
+        "config": {
+            "learning_rate": cfg['models']['tft']['learning_rate'],
+            "hidden_size": cfg['models']['tft']['hidden_size'],
+            "attention_head_size": cfg['models']['tft']['attention_head_size'],
+            "dropout": cfg['models']['tft']['dropout'],
+            "encoder_length": cfg['models']['tft']['encoder_length'],
+            "batch_size": cfg['models']['tft']['batch_size']
+        }
+    }
+    
+    metadata_path = artifacts_dir / "model_metadata.json"
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    logger.info(f"Model artifacts saved to {artifacts_dir}")
 
 def calculate_realistic_pnl(actions, y_true, prices, initial_capital=100000, fee_rate=0.001, slippage=0.0005):
     capital = initial_capital
@@ -258,87 +369,30 @@ def calculate_realistic_pnl(actions, y_true, prices, initial_capital=100000, fee
     return np.array(pnl_curve)
 
 def main():
-    cfg = load_config("Algorithm1/config.yaml")
-    logger.info("Loading processed data...")
-    df = pd.read_parquet("processed_data/processed_data.parquet")
-    logger.info("Generating action-based labels...")
-    label_gen = LabelGenerator(cfg)
-    df = label_gen.generate_action_labels(df)
-    logger.info("Checking for data leakage in features...")
-    for col in get_feature_columns(df):
-        if any('future' in str(col).lower() or 'lead' in str(col).lower() for col in df.columns):
-            logger.warning(f"Potential leakage in feature: {col}")
-    logger.info("Preparing features...")
-    X, y = prepare_features_chunked(df)
-    save_feature_matrix(X, y, "artefacts")
-    train_size = int(0.8 * len(X))
-    X_train, X_test = X[:train_size], X[train_size:]
-    y_train, y_test = y[:train_size], y[train_size:]
-    price_col = 'close' if 'close' in df.columns else None
-    prices_test = df[price_col].iloc[train_size:] if price_col else np.ones(len(X_test))
-    logger.info(f"Training set: {X_train.shape}, Test set: {X_test.shape}")
-    n_classes = len(np.unique(y))
-    study = optuna.create_study(direction='minimize')
-    study.optimize(
-        lambda trial: lgb_objective(trial, X_train, y_train, X_test, y_test, n_classes),
-        n_trials=cfg['ml']['lgbm']['max_evals']
-    )
-    best_params = study.best_params
-    logger.info(f"Best parameters: {best_params}")
-    final_params = {
-        'objective': 'multiclass',
-        'num_class': n_classes,
-        'metric': 'multi_logloss',
-        'boosting_type': 'gbdt',
-        'verbosity': -1,
-        'random_state': 42,
-        **best_params
-    }
-    logger.info("Training final model on training set...")
-    train_data = lgb.Dataset(X_train, label=y_train)
-    val_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
-    model = lgb.train(
-        final_params,
-        train_data,
-        valid_sets=[val_data],
-        num_boost_round=1000,
-        callbacks=[lgb.early_stopping(cfg['ml']['lgbm']['early_stopping']), lgb.log_evaluation(100)]
-    )
-    output_dir = Path("artefacts")
-    output_dir.mkdir(exist_ok=True)
-    model_path = output_dir / "lgbm_model.pkl"
-    with open(model_path, 'wb') as f:
-        pickle.dump(model, f)
-    logger.info(f"Model saved to {model_path}")
-    importance_df = pd.DataFrame({
-        'feature': X.columns,
-        'importance': model.feature_importance(importance_type='gain')
-    }).sort_values('importance', ascending=False)
-    importance_df.to_csv(output_dir / "feature_importance.csv", index=False)
-    logger.info("Feature importance saved.")
-    generate_rule_miner_report(X, y, threshold=cfg['labeling']['threshold'], min_precision=cfg['rule_mining']['min_precision'], min_recall=cfg['rule_mining']['min_recall'])
-    logger.info("Evaluating LightGBM on out-of-sample test set for PnL curve...")
-    test_preds = model.predict(X_test)
-    test_actions = np.argmax(test_preds, axis=1)
-    pnl_curve = calculate_realistic_pnl(test_actions, y_test, prices_test)
-    plot_pnl_curves(pnl_curve, output_dir)
-    # --- TFT Model ---
-    logger.info("Training TFT model...")
-    tft, test_df, val_dataloader = train_tft_model(df, cfg, output_dir, X_train.index, X_test.index)
-    logger.info("Evaluating TFT on out-of-sample test set for PnL curve...")
-    # Get TFT predictions
-    tft_preds = []
-    tft_prices = []
-    tft_labels = []
-    for batch in val_dataloader:
-        x, y_true = batch[0], batch[1]
-        y_pred = tft(x).detach().cpu().numpy()
-        tft_preds.extend(np.argmax(y_pred, axis=1))
-        tft_labels.extend(y_true.cpu().numpy())
-        tft_prices.extend(test_df['close'].values[:len(y_true)])
-    tft_pnl_curve = calculate_realistic_pnl(tft_preds, tft_labels, tft_prices)
-    plot_pnl_curves(tft_pnl_curve, output_dir)
-    logger.info("All artifacts saved. Training complete!")
+    """Main training pipeline."""
+    # Load configuration
+    cfg = load_config("config.yaml")
+    
+    # Load and prepare data
+    df = pd.read_parquet("processed_data/features.parquet")
+    
+    # Generate labels
+    label_generator = LabelGenerator(cfg)
+    df = label_generator.generate_action_labels(df)
+    
+    # Prepare data for training
+    training, validation = prepare_data(df, cfg)
+    
+    # Train model
+    model, trainer = train_tft_model(training, validation, cfg)
+    
+    # Evaluate model
+    metrics = evaluate_model(model, validation.to_dataloader(train=False, batch_size=cfg['models']['tft']['batch_size']))
+    
+    # Save artifacts
+    save_model_artifacts(model, trainer, metrics, cfg)
+    
+    logger.info("Training pipeline completed successfully")
 
 if __name__ == "__main__":
     main() 

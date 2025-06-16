@@ -127,7 +127,6 @@ This is the recommended way to run a full end-to-end paper trading simulation wi
 
 1. Create and activate a virtual environment (Must have Python 3.10 installed):
 ```bash
-cd Algorithm1
 py -3.10 -m venv venv
 # On Windows:
 .\venv\Scripts\Activate.ps1
@@ -191,3 +190,43 @@ For more details, refer to [adaptive_risk_model.md](adaptive_risk_model.md).
 
 ### Integration and Testing
 The adaptive risk model is fully integrated with the trading module and trading model. The test suite (`test_risk_engine.py`) passes 100%, confirming that the risk model is robust and correctly implemented. This integration ensures that every trade is governed by the research-grade risk engine, providing dynamic risk allocation based on statistical confidence and market conditions.
+
+## Redis Setup for Paper Trading Module
+
+The Paper Trading module uses Redis to share live state (price, account balance, trades, etc.) between the trading engine and the web dashboard. **Redis must be running for the system to work.**
+
+### 1. Download and Install Redis
+
+#### **Windows:**
+- Download the latest Redis for Windows from: https://github.com/tporadowski/redis/releases
+- Extract the zip and run `redis-server.exe` (double-click or from command line).
+
+#### **MacOS (Homebrew):**
+```bash
+brew install redis
+brew services start redis
+```
+
+#### **Linux (Debian/Ubuntu):**
+```bash
+sudo apt-get update
+sudo apt-get install redis-server
+sudo systemctl enable redis-server.service
+sudo systemctl start redis-server.service
+```
+
+### 2. Start the Redis Server
+- Make sure the Redis server is running before you start the paper trading engine or web dashboard.
+- By default, the system connects to `localhost:6379`.
+
+### 3. Python Redis Client
+- The required Python package (`redis`) is already included in `requirements.txt`.
+
+### 4. Configuration
+- No extra configuration is needed for local development. If you want to use a remote Redis server, edit the connection settings in `webapp.py` and `paper_trader.py`.
+
+### 5. Troubleshooting
+- If you see connection errors, make sure Redis is running and accessible on `localhost:6379`.
+- You can test Redis with the command: `redis-cli ping` (should return `PONG`).
+
+---
