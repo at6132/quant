@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Union
 import yaml
 import numpy as np
-from risk_engine import RiskEngine
+from .risk_engine import RiskEngine
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

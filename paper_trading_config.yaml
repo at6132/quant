@@ -1,0 +1,180 @@
+# Paper Trading System Configuration
+
+# Web application settings
+webapp:
+  host: '0.0.0.0'
+  port: 5000
+  debug: false
+
+# Data source configuration
+data:
+  kraken:
+    websocket_url: "wss://ws.kraken.com/"
+    rest_url: "https://api.kraken.com/0/public/"
+
+# Data processing configuration
+data_processing:
+  lookback_period: 1000  # Number of candles to keep in memory
+  indicators:
+    sma_periods: [10, 20, 50, 100, 200]
+    rsi_period: 14
+    bb_period: 20
+    bb_std: 2.0
+    
+# Trading configuration
+trading:
+  symbols: ["XBT/USD", "ETH/USD"]  # Kraken symbol format
+  timeframes: ["15s", "1m", "5m", "15m", "1h"]  # 15-second candle loop included
+  
+# Account settings
+account:
+  initial_balance: 100000.0
+  currency: "USD"
+  margin_enabled: false
+  max_leverage: 3.0  # Added for portfolio_analytics.py
+  
+# Monitoring and Redis configuration
+monitoring:
+  log_level: "INFO"
+  log_file: "logs/paper_trading.log"
+  metrics_interval: 15  # seconds
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+  risk_limits:
+    max_drawdown: 0.05  # 5% max drawdown
+    max_position_size: 0.20  # 20% of capital
+    max_daily_loss: 0.02  # 2% daily loss
+    max_leverage: 3.0
+    min_sharpe: 1.0
+    max_correlation: 0.7
+  performance:
+    lookback_period: 20
+    min_win_rate: 0.45
+    min_profit_factor: 1.2
+    max_drawdown_duration: 10
+  alerts:
+    email:
+      enabled: false
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      sender_email: ""
+      sender_password: ""
+      recipient_emails: []
+    slack:
+      enabled: false
+      webhook_url: ""
+  reporting:
+    daily_report_time: "23:00"
+    report_metrics:
+      - "returns"
+      - "sharpe_ratio"
+      - "drawdown"
+      - "win_rate"
+      - "profit_factor"
+      - "position_sizes"
+      - "risk_metrics"
+
+# Portfolio analytics configuration
+portfolio_analytics:
+  risk_free_rate: 0.02
+  benchmark: "BTC-USD"
+  metrics:
+    storage_duration: 86400  # 24 hours
+    report_duration: 2592000  # 30 days
+    max_returns_history: 1000
+    update_interval: 60
+    lookback_period: 252
+  risk_limits:
+    max_leverage: 3.0
+    min_margin_level: 150.0
+    max_drawdown: 0.15
+    max_var_95: 0.02
+  performance_thresholds:
+    min_sharpe: 1.0
+    min_sortino: 1.5
+    min_information_ratio: 0.5
+    min_win_rate: 0.5
+    min_profit_factor: 1.5
+    max_drawdown: 0.15
+  reporting:
+    daily_report_time: "23:59:59"
+    daily_report: true
+    weekly_report: true
+    monthly_report: true
+    report_time: "23:59"
+    metrics_to_track:
+      - total_value
+      - daily_pnl
+      - daily_return
+      - sharpe_ratio
+      - sortino_ratio
+      - max_drawdown
+      - win_rate
+      - profit_factor
+      - leverage
+      - margin_level
+      - var_95
+      - cvar_95
+      - information_ratio
+      - tracking_error
+
+# Risk management settings (matching what RiskManager expects)
+risk_management:
+  max_leverage: 3.0
+  min_margin_level: 150.0
+  max_drawdown: 0.15
+  max_var_95: 0.02
+  max_margin_used: 10000.0
+  risk_free_rate: 0.02  # Added for portfolio analytics
+  position_limits:
+    max_long_positions: 5
+    max_short_positions: 5
+    max_position_size: 1000.0
+  performance_thresholds:  # Added for portfolio analytics
+    min_sharpe: 1.0
+    min_sortino: 1.5
+    max_drawdown: 0.15
+    min_win_rate: 0.5
+  position_sizing:
+    max_position_size: 0.1  # 10% of portfolio
+    max_total_exposure: 1.0  # 100% of portfolio
+    min_position_size: 0.001  # 0.1% of portfolio
+  stop_loss:
+    enabled: true
+    default_stop_loss: 0.02  # 2%
+    trailing_stop: true
+    trailing_distance: 0.01  # 1%
+  take_profit:
+    enabled: true
+    default_take_profit: 0.04  # 4%
+    risk_reward_ratio: 2.0
+  volatility:
+    lookback_period: 20
+    max_volatility: 0.05  # 5% daily volatility
+    volatility_adjustment: true
+  correlation:
+    max_correlation: 0.7
+    lookback_period: 30
+  drawdown:
+    max_drawdown: 0.15  # 15%
+    max_consecutive_losses: 5
+    recovery_threshold: 0.05  # 5%
+
+# Order management settings
+order_management:
+  execution:
+    slippage: 0.001  # 0.1%
+    commission: 0.001  # 0.1%
+    latency_ms: 50
+    partial_fills: true
+  order_types:
+    market_orders: true
+    limit_orders: true
+    stop_orders: true
+    stop_limit_orders: true
+  position_limits:
+    max_orders_per_symbol: 10
+    max_open_positions: 5
+    order_timeout: 300  # 5 minutes
