@@ -43,128 +43,165 @@ def process_chunk(df: pd.DataFrame, start_idx: int, end_idx: int) -> Tuple[pd.Da
             df.index = pd.to_datetime(df.index)
         
         # Process PVSRA
-        logger.debug("Processing indicators...")
-        pvsra_result = pvsra_process(df)
-        if isinstance(pvsra_result, pd.DataFrame):
-            df = pd.concat([df, pvsra_result[['vec_color', 'gr_pattern']]], axis=1)
-        else:
-            error_msg = f"pvsra_process returned type {type(pvsra_result)}: {pvsra_result}"
+        logger.debug("Processing PVSRA...")
+        try:
+            pvsra_result = pvsra_process(df)
+            if isinstance(pvsra_result, pd.DataFrame) and not pvsra_result.empty:
+                # Ensure index alignment
+                if not pvsra_result.index.equals(df.index):
+                    pvsra_result = pvsra_result.reindex(df.index, fill_value=0)
+                # Select only expected columns to avoid conflicts
+                expected_cols = ['vec_color', 'gr_pattern']
+                available_cols = [col for col in expected_cols if col in pvsra_result.columns]
+                if available_cols:
+                    df = pd.concat([df, pvsra_result[available_cols]], axis=1)
+            else:
+                logger.warning("PVSRA process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in PVSRA: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process Sessions
-        sessions_result = sessions_process(df)
-        if isinstance(sessions_result, pd.DataFrame):
-            df = pd.concat([df, sessions_result[['session_id', 'session_name', 'in_session', 'new_session', 'session_open', 'minutes_into']]], axis=1)
-        else:
-            error_msg = f"sessions_process returned type {type(sessions_result)}: {sessions_result}"
+        logger.debug("Processing Sessions...")
+        try:
+            sessions_result = sessions_process(df)
+            if isinstance(sessions_result, pd.DataFrame) and not sessions_result.empty:
+                # Ensure index alignment
+                if not sessions_result.index.equals(df.index):
+                    sessions_result = sessions_result.reindex(df.index, fill_value=0)
+                # Select only expected columns
+                expected_cols = ['session_id', 'session_name', 'in_session', 'new_session', 'session_open', 'minutes_into']
+                available_cols = [col for col in expected_cols if col in sessions_result.columns]
+                if available_cols:
+                    df = pd.concat([df, sessions_result[available_cols]], axis=1)
+            else:
+                logger.warning("Sessions process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in Sessions: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process ICT SM Trades
-        ict_result = ict_sm_trades_process(df)
-        if isinstance(ict_result, pd.DataFrame):
-            df = pd.concat([df, ict_result], axis=1)
-        else:
-            error_msg = f"ict_sm_trades_process returned type {type(ict_result)}: {ict_result}"
+        logger.debug("Processing ICT SM Trades...")
+        try:
+            ict_result = ict_sm_trades_process(df)
+            if isinstance(ict_result, pd.DataFrame) and not ict_result.empty:
+                # Ensure index alignment
+                if not ict_result.index.equals(df.index):
+                    ict_result = ict_result.reindex(df.index, fill_value=0)
+                df = pd.concat([df, ict_result], axis=1)
+            else:
+                logger.warning("ICT SM Trades process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in ICT SM Trades: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process Breaker Signals
-        breaker_result = breaker_signals_process(df)
-        if isinstance(breaker_result, pd.DataFrame):
-            df = pd.concat([df, breaker_result], axis=1)
-        else:
-            error_msg = f"breaker_signals_process returned type {type(breaker_result)}: {breaker_result}"
+        logger.debug("Processing Breaker Signals...")
+        try:
+            breaker_result = breaker_signals_process(df)
+            if isinstance(breaker_result, pd.DataFrame) and not breaker_result.empty:
+                # Ensure index alignment
+                if not breaker_result.index.equals(df.index):
+                    breaker_result = breaker_result.reindex(df.index, fill_value=0)
+                df = pd.concat([df, breaker_result], axis=1)
+            else:
+                logger.warning("Breaker Signals process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in Breaker Signals: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process Liquidity Swings
-        swing_result = liquidity_swings_process(df)
-        if isinstance(swing_result, pd.DataFrame):
-            df = pd.concat([df, swing_result], axis=1)
-        else:
-            error_msg = f"liquidity_swings_process returned type {type(swing_result)}: {swing_result}"
+        logger.debug("Processing Liquidity Swings...")
+        try:
+            swing_result = liquidity_swings_process(df)
+            if isinstance(swing_result, pd.DataFrame) and not swing_result.empty:
+                # Ensure index alignment
+                if not swing_result.index.equals(df.index):
+                    swing_result = swing_result.reindex(df.index, fill_value=0)
+                df = pd.concat([df, swing_result], axis=1)
+            else:
+                logger.warning("Liquidity Swings process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in Liquidity Swings: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process SMC Core
         try:
-            print('SMC Core: input df shape:', df.shape)
-            print('SMC Core: input df columns:', df.columns.tolist())
-            print('SMC Core: input df head:\n', df.head())
-            try:
-                smc_df = df[['open', 'high', 'low', 'close']].copy()
-                smc_df['time'] = smc_df.index.astype(np.int64) // 10**6  # Convert to ms
-                smc_df = smc_df.reset_index(drop=True)  # Integer index for SMC
-                print('SMC Core: smc_df shape:', smc_df.shape)
-                print('SMC Core: smc_df columns:', smc_df.columns.tolist())
-                print('SMC Core: smc_df head:\n', smc_df.head())
-            except Exception as e:
-                print('SMC Core: DataFrame preparation error:', e)
-                error_msg = f"SMC Core DataFrame preparation error: {str(e)}"
+            logger.debug("Processing SMC Core...")
+            
+            # Ensure we have the required columns
+            if not all(col in df.columns for col in ['open', 'high', 'low', 'close']):
+                error_msg = "SMC Core requires OHLC columns"
                 logger.error(error_msg)
                 errors.append(error_msg)
                 return df, errors
-            try:
-                smc_result = list(smc_core_process(smc_df))
-                print('SMC Core: smc_result type:', type(smc_result), 'length:', len(smc_result))
-                if smc_result:
-                    smc_result_df = pd.DataFrame(smc_result, index=df.index)  # Re-align to datetime index
-                    smc_result_df = smc_result_df.add_prefix('smc_')
-                    print('SMC Core: smc_result_df shape:', smc_result_df.shape)
-                    print('SMC Core: smc_result_df columns:', smc_result_df.columns.tolist())
-                    print('SMC Core: smc_result_df head:\n', smc_result_df.head())
-                    df = pd.concat([df, smc_result_df], axis=1)
-                else:
-                    error_msg = "SMC Core returned empty list"
-                    print(error_msg)
-                    logger.error(error_msg)
-                    errors.append(error_msg)
-                    return df, errors
-            except Exception as e:
-                print('SMC Core: process_candles error:', e)
-                error_msg = f"Error in SMC Core: {str(e)}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-                return df, errors
+            
+            # Use the proper prepare_smc_core_data function from the smc_core module
+            from Core.indicators.smc_core import prepare_smc_core_data
+            
+            smc_result_df = prepare_smc_core_data(df)
+            
+            if not smc_result_df.empty:
+                # Add prefix to avoid column name conflicts
+                smc_result_df = smc_result_df.add_prefix('smc_')
+                logger.debug(f"SMC Core added columns: {smc_result_df.columns.tolist()}")
+                
+                # Ensure index alignment before concatenation
+                if not smc_result_df.index.equals(df.index):
+                    logger.warning("SMC Core index mismatch, attempting to align...")
+                    smc_result_df = smc_result_df.reindex(df.index, fill_value=0)
+                
+                df = pd.concat([df, smc_result_df], axis=1)
+            else:
+                logger.warning("SMC Core returned empty DataFrame")
+                
         except Exception as e:
-            print('SMC Core: unknown error:', e)
             error_msg = f"Error in SMC Core: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process TR Reality Core
-        tr_result = tr_reality_core_process(df)
-        if isinstance(tr_result, pd.DataFrame):
-            df = pd.concat([df, tr_result], axis=1)
-        else:
-            error_msg = f"tr_reality_core_process returned type {type(tr_result)}: {tr_result}"
+        logger.debug("Processing TR Reality Core...")
+        try:
+            tr_result = tr_reality_core_process(df)
+            if isinstance(tr_result, pd.DataFrame) and not tr_result.empty:
+                # Ensure index alignment
+                if not tr_result.index.equals(df.index):
+                    tr_result = tr_result.reindex(df.index, fill_value=0)
+                df = pd.concat([df, tr_result], axis=1)
+            else:
+                logger.warning("TR Reality Core process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in TR Reality Core: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
         # Process BB OB Engine
-        bb_result = bb_process(df)
-        if isinstance(bb_result, pd.DataFrame):
-            df = pd.concat([df, bb_result], axis=1)
-        else:
-            error_msg = f"bb_process returned type {type(bb_result)}: {bb_result}"
+        logger.debug("Processing BB OB Engine...")
+        try:
+            bb_result = bb_process(df)
+            if isinstance(bb_result, pd.DataFrame) and not bb_result.empty:
+                # Ensure index alignment
+                if not bb_result.index.equals(df.index):
+                    bb_result = bb_result.reindex(df.index, fill_value=0)
+                df = pd.concat([df, bb_result], axis=1)
+            else:
+                logger.warning("BB OB Engine process returned invalid or empty result")
+        except Exception as e:
+            error_msg = f"Error in BB OB Engine: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
-            return df, errors
             
-        logger.debug("Indicators processed successfully")
+        logger.debug("All indicators processed successfully")
         return df, errors
         
     except Exception as e:
-        error_msg = str(e)
-        logger.error("Error processing indicators: %s", error_msg)
+        error_msg = f"Unexpected error in process_chunk: {str(e)}"
+        logger.error(error_msg)
         errors.append(error_msg)
         return df, errors 
