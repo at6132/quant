@@ -1,10 +1,10 @@
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Union
 import yaml
+import time
+from datetime import datetime
 from .order_manager import OrderManager
 from .risk_manager import RiskManager
-from .monitoring import MonitoringSystem
 from .portfolio_analytics import PortfolioAnalytics
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -29,8 +29,7 @@ class PaperTrader:
         
         # Initialize state
         self.positions = {}
-        self.trade_history = []
-        self.balance = self.account_settings.get('initial_balance', 100000.0)
+        self.orders = []
         self.running = False
         
         logger.info("Paper trader initialized")
@@ -39,7 +38,6 @@ class PaperTrader:
             # Initialize components
             self.order_manager = OrderManager(config)
             self.risk_manager = RiskManager(config)
-            self.monitoring = MonitoringSystem(config)
             
             # Initialize portfolio analytics with default settings if not in config
             if 'portfolio_analytics' not in self.config:
@@ -65,9 +63,6 @@ class PaperTrader:
                 }
             self.portfolio_analytics = PortfolioAnalytics(config)
             
-            # Initialize state
-            self.current_prices = {}
-            
         except Exception as e:
             logger.error("Error initializing paper trader: %s", str(e))
             raise
@@ -80,7 +75,6 @@ class PaperTrader:
             
         try:
             # Start components
-            self.monitoring.start()
             self.risk_manager.start()
             
             self.running = True
@@ -95,11 +89,10 @@ class PaperTrader:
         """Stop the paper trader"""
         if not self.running:
             logger.warning("Paper trader is not running")
-        return
-    
+            return
+            
         try:
             # Stop components
-            self.monitoring.stop()
             self.risk_manager.stop()
             
             self.running = False
@@ -109,58 +102,86 @@ class PaperTrader:
             logger.error("Error stopping components: %s", str(e))
             raise
             
-    def update_prices(self, prices: Dict[str, float]):
-        """Update current prices"""
-        self.current_prices = prices
-        self.risk_manager.update_prices(prices)
+    def place_order(self, symbol: str, side: str, size: float, price: float) -> Dict:
+        """Place a paper trade order
         
-    def execute_trade(self, symbol: str, side: str, size: float, price: float) -> bool:
-        """Execute a trade"""
+        Args:
+            symbol: Trading symbol
+            side: Order side ('buy' or 'sell')
+            size: Order size
+            price: Order price
+            
+        Returns:
+            Order information
+        """
         try:
             # Create order
-            order = self.order_manager.create_order(symbol, side, size, price)
+            order = {
+                'symbol': symbol,
+                'side': side,
+                'size': size,
+                'price': price,
+                'timestamp': datetime.now(),
+                'status': 'filled'  # Paper trading fills immediately
+            }
             
-            # Process order
-            filled_order = self.order_manager.process_order(order)
+            # Update position
+            if symbol not in self.positions:
+                self.positions[symbol] = 0.0
+                
+            if side == 'buy':
+                self.positions[symbol] += size
+            else:
+                self.positions[symbol] -= size
+                
+            # Store order
+            self.orders.append(order)
             
-            if filled_order:
-                # Update positions
-                self.positions = self.order_manager.get_positions()
-                    
-                # Update risk metrics
-                self.risk_manager.update_positions(self.positions)
-                
-                # Log trade
-                self.monitoring.log_trade(filled_order)
-                
-                # Update trade history
-                self.trade_history.append(filled_order)
-                
-                return True
-                
-            return False
-                    
+            logger.info("Placed %s order for %s: %.2f @ %.2f", 
+                       side, symbol, size, price)
+            
+            return order
+            
         except Exception as e:
-            logger.error("Error executing trade: %s", str(e))
-            return False
+            logger.error("Error placing order: %s", str(e))
+            return None
             
-    def get_positions(self) -> Dict[str, float]:
-        """Get current positions"""
-        return self.positions
+    def get_position(self, symbol: str) -> float:
+        """Get current position for a symbol
         
-    def get_trade_history(self) -> List[Dict]:
-        """Get trade history"""
-        return self.trade_history
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Current position size
+        """
+        return self.positions.get(symbol, 0.0)
+        
+    def get_positions(self) -> Dict[str, float]:
+        """Get all current positions
+        
+        Returns:
+            Dictionary of symbol to position size
+        """
+        return self.positions.copy()
+        
+    def get_orders(self) -> List[Dict]:
+        """Get order history
+        
+        Returns:
+            List of order dictionaries
+        """
+        return self.orders.copy()
         
     def get_portfolio_metrics(self) -> Dict:
         """Get current portfolio metrics"""
         metrics = self.portfolio_analytics.calculate_portfolio_metrics(
             self.positions,
-            self.trade_history,
-            self.current_prices
+            self.orders,
+            self.positions
         )
         return self.portfolio_analytics.generate_portfolio_report(metrics)
         
     def get_daily_report(self) -> Dict:
         """Get daily performance report"""
-        return self.monitoring.generate_daily_report() 
+        return self.portfolio_analytics.generate_daily_report() 

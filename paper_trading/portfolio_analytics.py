@@ -28,9 +28,40 @@ class PortfolioAnalytics:
         # Initialize state
         self.metrics_history = []
         self.reports = []
+        self.running = False
+        
+        # Load analytics settings
+        self.analytics_settings = self.config.get('portfolio_analytics', {})
         
         logger.info("Portfolio analytics initialized")
         
+    def start(self):
+        """Start the portfolio analytics"""
+        if self.running:
+            logger.warning("Portfolio analytics is already running")
+            return
+            
+        try:
+            self.running = True
+            logger.info("Portfolio analytics started")
+        except Exception as e:
+            logger.error("Error starting portfolio analytics: %s", str(e))
+            self.running = False
+            raise
+            
+    def stop(self):
+        """Stop the portfolio analytics"""
+        if not self.running:
+            logger.warning("Portfolio analytics is not running")
+            return
+            
+        try:
+            self.running = False
+            logger.info("Portfolio analytics stopped")
+        except Exception as e:
+            logger.error("Error stopping portfolio analytics: %s", str(e))
+            raise
+            
     def calculate_portfolio_metrics(self, positions: Dict, trades: List[Dict], prices: Dict) -> Dict:
         """Calculate portfolio metrics"""
         try:
@@ -362,4 +393,23 @@ class PortfolioAnalytics:
             return "\n".join(summary)
         except Exception as e:
             logger.error("Error generating summary: %s", str(e))
-            return "Error generating summary" 
+            return "Error generating summary"
+
+    def generate_daily_report(self) -> Dict:
+        """Generate daily performance report
+        
+        Returns:
+            Daily report
+        """
+        try:
+            report = {
+                'timestamp': datetime.now().isoformat(),
+                'metrics': self.metrics_history[-1],
+                'alerts': self.alerts
+            }
+            
+            return report
+            
+        except Exception as e:
+            logger.error("Error generating daily report: %s", str(e))
+            return {} 

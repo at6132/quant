@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 import yaml
 import redis
 import json
@@ -46,10 +46,15 @@ class OrderManager:
         self.trading_settings = self.config.get('trading', {})
         self.account_settings = self.config.get('account', {})
         
+        # Initialize order settings with defaults
+        self.min_order_size = self.trading_settings.get('min_order_size', 0.001)
+        self.max_order_size = self.trading_settings.get('max_order_size', 1000.0)
+        self.max_slippage = self.trading_settings.get('max_slippage', 0.01)  # 1%
+        
         # Initialize state
         self.orders = {}
-        self.positions = {}
-        self.order_history = []
+        self.positions = {}  # symbol -> {'side': 'long'/'short', 'quantity': float, 'entry_price': float}
+        self.trade_history = []  # List of round-trip trades with realized PnL
         self.running = False
         
         # Initialize Redis connection
@@ -69,6 +74,147 @@ class OrderManager:
         self.margin_account_key = "margin_account"
         
         logger.info("Order manager initialized")
+        
+    def start(self):
+        """Start the order manager"""
+        if self.running:
+            logger.warning("Order manager is already running")
+            return
+            
+        try:
+            self.running = True
+            logger.info("Order manager started")
+        except Exception as e:
+            logger.error("Error starting order manager: %s", str(e))
+            self.running = False
+            raise
+            
+    def stop(self):
+        """Stop the order manager"""
+        if not self.running:
+            logger.warning("Order manager is not running")
+            return
+            
+        try:
+            self.running = False
+            logger.info("Order manager stopped")
+        except Exception as e:
+            logger.error("Error stopping order manager: %s", str(e))
+            raise
+            
+    def place_order(self, symbol: str, side: str, size: float, price: float) -> Optional[Dict]:
+        """Place a new order and record a trade only when a position is closed or reduced, with correct realized PnL."""
+        try:
+            order_id = str(uuid.uuid4())
+            timestamp = datetime.now().isoformat()
+            realized_pnl = 0.0
+            trade_recorded = False
+            trade = None
+
+            # Get current position
+            pos = self.positions.get(symbol, {'side': None, 'quantity': 0.0, 'entry_price': 0.0})
+            pos_side = pos['side']
+            pos_qty = pos['quantity']
+            pos_entry = pos['entry_price']
+
+            if pos_side is None or pos_qty == 0.0:
+                # No open position, this is an entry
+                new_side = 'long' if side == 'buy' else 'short'
+                self.positions[symbol] = {
+                    'side': new_side,
+                    'quantity': size,
+                    'entry_price': price
+                }
+            elif (pos_side == 'long' and side == 'buy') or (pos_side == 'short' and side == 'sell'):
+                # Adding to existing position
+                total_qty = pos_qty + size
+                avg_entry = (pos_entry * pos_qty + price * size) / total_qty
+                self.positions[symbol]['quantity'] = total_qty
+                self.positions[symbol]['entry_price'] = avg_entry
+            else:
+                # Closing or reducing position
+                closing_qty = min(size, pos_qty)
+                if pos_side == 'long':
+                    realized_pnl = (price - pos_entry) * closing_qty
+                else:
+                    realized_pnl = (pos_entry - price) * closing_qty
+                
+                # Record the round-trip trade
+                trade = {
+                    'id': order_id,
+                    'symbol': symbol,
+                    'entry_side': pos_side,
+                    'entry_price': pos_entry,
+                    'exit_side': side,
+                    'exit_price': price,
+                    'quantity': closing_qty,
+                    'realized_pnl': realized_pnl,
+                    'timestamp': timestamp
+                }
+                self.trade_history.append(trade)
+                trade_recorded = True
+                
+                # Update or close the position
+                remaining_qty = pos_qty - closing_qty
+                if remaining_qty > 0:
+                    self.positions[symbol]['quantity'] = remaining_qty
+                    # entry_price remains the same
+                else:
+                    self.positions[symbol] = {'side': None, 'quantity': 0.0, 'entry_price': 0.0}
+                
+                # If order size > closing_qty, open new position in opposite direction
+                open_qty = size - closing_qty
+                if open_qty > 0:
+                    new_side = 'long' if side == 'buy' else 'short'
+                    self.positions[symbol] = {
+                        'side': new_side,
+                        'quantity': open_qty,
+                        'entry_price': price
+                    }
+            # Store order (for completeness, but not used for trade history)
+            order = {
+                'id': order_id,
+                'symbol': symbol,
+                'side': side,
+                'size': size,
+                'price': price,
+                'timestamp': timestamp,
+                'status': 'filled',
+                'realized_pnl': realized_pnl if trade_recorded else None
+            }
+            self.orders[order_id] = order
+            logger.info("Placed %s order for %s: %.6f @ %.2f%s", side, symbol, size, price, f" (Trade PnL: {realized_pnl:.2f})" if trade_recorded else "")
+            return order
+        except Exception as e:
+            logger.error("Error placing order: %s", str(e))
+            return None
+        
+    def get_position(self, symbol: str) -> float:
+        """Get current position for a symbol
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Current position size
+        """
+        return self.positions.get(symbol, 0.0)
+        
+    def get_positions(self) -> Dict[str, float]:
+        """Get all current positions
+        
+        Returns:
+            Dictionary of symbol to position size
+        """
+        return self.positions.copy()
+        
+    def get_orders(self) -> List[Dict]:
+        """Get order history
+        
+        Returns:
+            List of order dictionaries
+        """
+        return self.trade_history.copy()
         
     def create_order(self, symbol: str, side: str, quantity: float, price: float) -> Dict:
         """Create a new order"""
@@ -132,7 +278,7 @@ class OrderManager:
             self._update_position(order)
             
             # Add to history
-            self.order_history.append(order)
+            self.trade_history.append(order)
             
             # Remove from active orders
             del self.orders[order_id]
@@ -192,13 +338,9 @@ class OrderManager:
             logger.error("Error updating position: %s", str(e))
             raise
         
-    def get_positions(self) -> Dict:
-        """Get current positions"""
-        return self.positions
-        
-    def get_order_history(self) -> List[Dict]:
-        """Get order history"""
-        return self.order_history
+    def get_trade_history(self) -> List[Dict]:
+        """Get round-trip trade history (entry/exit pairs with realized PnL)"""
+        return self.trade_history.copy()
         
     def get_open_orders(self) -> List[Dict]:
         """Get open orders"""

@@ -1,66 +1,56 @@
 import logging
-import threading
 import time
+from typing import Dict, List, Union, Any
+import pandas as pd
+import numpy as np
 from datetime import datetime
-from typing import Dict, List, Optional, Union
-import yaml
 import redis
 import json
-import websocket
-import pandas as pd
-from Core.datafeed_kraken import KrakenDataFeed
-from paper_trading.data_processor import DataProcessor
-from paper_trading.paper_trader import PaperTrader
-from paper_trading.risk_manager import RiskManager
-from paper_trading.monitoring import MonitoringSystem
-from paper_trading.portfolio_analytics import PortfolioAnalytics
-from paper_trading.utils import process_chunk
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class TradingLoop:
-    def __init__(self, config: Union[str, Dict] = "paper_trading_config.yaml"):
-        """Initialize trading loop with configuration
+    def __init__(self, config: Dict, data_processor: Any = None,
+                 risk_manager: Any = None, order_manager: Any = None):
+        """Initialize trading loop with configuration and components
         
         Args:
-            config: Either a path to the config file or a config dictionary
+            config: Configuration dictionary
+            data_processor: Data processor instance
+            risk_manager: Risk manager instance
+            order_manager: Order manager instance
         """
-        if isinstance(config, str):
-            with open(config, 'r') as f:
-                self.config = yaml.safe_load(f)
-        else:
-            self.config = config
-            
-        # Initialize components
-        self.data_processor = DataProcessor(self.config)
-        self.paper_trader = PaperTrader(self.config)
-        self.risk_manager = RiskManager(self.config)
-        self.portfolio_analytics = PortfolioAnalytics(self.config)
-        self.monitoring = MonitoringSystem(self.config)
+        self.config = config
+        self.data_processor = data_processor
+        self.risk_manager = risk_manager
+        self.order_manager = order_manager
+        self.running = False
         
-        # Set monitoring system dependencies
-        self.monitoring.set_dependencies(
-            self.paper_trader,
-            self.portfolio_analytics,
-            self.data_processor
-        )
-        
-        # Initialize Redis connection
-        self.redis_client = redis.Redis(
-            host=self.config['monitoring']['redis']['host'],
-            port=self.config['monitoring']['redis']['port'],
-            db=self.config['monitoring']['redis']['db']
-        )
+        # Load trading settings
+        self.trading_settings = self.config.get('trading', {})
         
         # Initialize state
-        self.running = False
-        self.paused = False
+        self.symbol = 'BTC/USD'  # Only trade BTC
+        self.positions = {}
+        self.trade_history = []
         
-        # Initialize websocket
-        self.ws = None
+        # Initialize Redis connection for storing portfolio data
+        redis_config = self.config.get('monitoring', {}).get('redis', {})
+        self.redis_client = redis.Redis(
+            host=redis_config.get('host', 'localhost'),
+            port=redis_config.get('port', 6379),
+            db=redis_config.get('db', 0)
+        )
         
-        logger.info("Trading loop initialized")
+        # Initialize portfolio tracking
+        self.initial_balance = self.config.get('account', {}).get('initial_balance', 1000000.0)
+        self.current_balance = self.initial_balance
+        self.total_pnl = 0.0
+        self.daily_pnl = 0.0
+        self.last_trade_date = None
+        
+        logger.info("Trading loop initialized for BTC/USD")
         
     def start(self):
         """Start the trading loop"""
@@ -69,332 +59,208 @@ class TradingLoop:
             return
             
         try:
-            logger.info("Initializing trading loop...")
-            
-            # Set running flag first
             self.running = True
+            logger.info("Starting trading loop...")
             
-            # Connect to Kraken websocket
-            self.ws = websocket.WebSocketApp(
-                self.config['data']['kraken']['websocket_url'],
-                on_message=self._on_message,
-                on_error=self._on_error,
-                on_close=self._on_close,
-                on_open=self._on_open
-            )
+            # Initialize Redis with initial portfolio data
+            self._update_redis_portfolio_data()
             
-            # Start websocket in a separate thread
-            logger.info("Starting websocket thread...")
-            self.ws_thread = threading.Thread(target=self.ws.run_forever)
-            self.ws_thread.daemon = True
-            self.ws_thread.start()
-            
-            # Start monitoring in a separate thread
-            logger.info("Starting monitoring thread...")
-            self.monitoring_thread = threading.Thread(target=self._monitoring_loop)
-            self.monitoring_thread.daemon = True
-            self.monitoring_thread.start()
-            
-            # Start timeframe processing in a separate thread
-            logger.info("Starting timeframe processing thread...")
-            self.timeframe_thread = threading.Thread(target=self._timeframe_loop)
-            self.timeframe_thread.daemon = True
-            self.timeframe_thread.start()
-            
-            # Wait for websocket to connect
-            logger.info("Waiting for websocket connection...")
-            time.sleep(2)
-            
-            logger.info("Trading loop started successfully")
-            
+            # Start trading loop
+            while self.running:
+                try:
+                    logger.info("\n=== Starting new trading scan ===")
+                    
+                    # Get latest data
+                    price_data = self.data_processor.get_price_data(self.symbol)
+                    if not price_data:
+                        logger.warning("No price data available for BTC/USD")
+                        time.sleep(1)
+                        continue
+                        
+                    # Get latest bar
+                    latest_bar = price_data[-1]
+                    current_price = latest_bar['close']
+                    logger.info(f"Price: {current_price:.2f}")
+                    
+                    # Get predictions
+                    predictions = self.data_processor.get_predictions(self.symbol)
+                    if not predictions:
+                        logger.warning("No predictions available for BTC/USD")
+                        time.sleep(1)
+                        continue
+                        
+                    logger.info(f"Model prediction: {predictions['probability']:.2%}")
+                    
+                    # Calculate position size using account balance from configuration
+                    position_size_usd = self.risk_manager.calculate_position_size(
+                        self.symbol,
+                        predictions,
+                        self.current_balance  # Use current balance
+                    )
+                    logger.info(f"Risk model position size (USD): {position_size_usd:.4f}")
+                    
+                    # Convert USD position size to BTC quantity
+                    position_size_btc = position_size_usd / current_price if current_price > 0 else 0.0
+                    logger.info(f"Position size (BTC): {position_size_btc:.6f}")
+                    
+                    # Safety check: Limit position size to maximum 50% of account balance (with leverage this is reasonable)
+                    max_position_usd = self.current_balance * 0.50  # 50% max position for leveraged account
+                    max_position_btc = max_position_usd / current_price if current_price > 0 else 0.0
+                    
+                    if position_size_btc > max_position_btc:
+                        logger.warning(f"Position size {position_size_btc:.6f} BTC exceeds maximum {max_position_btc:.6f} BTC (50% of account)")
+                        position_size_btc = max_position_btc
+                        logger.info(f"Position size capped at: {position_size_btc:.6f} BTC")
+                    
+                    # Get current position
+                    current_position = self.positions.get(self.symbol, 0.0)
+                    logger.info(f"Current position: {current_position:.6f}")
+                    
+                    # Calculate current PnL if we have a position
+                    if current_position != 0:
+                        # Get average entry price (simplified - you might want to track this properly)
+                        entry_price = 105000.0  # Placeholder - should track actual entry price
+                        current_pnl = current_position * (current_price - entry_price)
+                        pnl_percentage = (current_pnl / (abs(current_position) * entry_price)) * 100
+                        logger.info(f"Current PnL: ${current_pnl:,.2f} ({pnl_percentage:+.2f}%)")
+                        
+                        # Update total PnL
+                        self.total_pnl = current_pnl
+                        
+                        # Update daily PnL
+                        today = datetime.now().date()
+                        if self.last_trade_date != today:
+                            self.daily_pnl = current_pnl
+                            self.last_trade_date = today
+                        else:
+                            self.daily_pnl = current_pnl
+                    
+                    # Check if we should trade
+                    if abs(position_size_btc - current_position) > 0.0001:  # Small threshold to avoid dust trades
+                        # Determine trade side
+                        if position_size_btc > current_position:
+                            side = 'buy'
+                            size = position_size_btc - current_position
+                        else:
+                            side = 'sell'
+                            size = current_position - position_size_btc
+                        
+                        # Minimum trade size check (0.01 BTC or $1000 equivalent for $1M account)
+                        min_trade_btc = max(0.01, 1000.0 / current_price) if current_price > 0 else 0.01
+                        
+                        if size < min_trade_btc:
+                            logger.info(f"Trade size {size:.6f} BTC below minimum {min_trade_btc:.6f} BTC, skipping trade")
+                            continue
+                            
+                        logger.info(f"Signal: {side.upper()} {size:.6f} BTC")
+                        
+                        # Place order
+                        order = self.order_manager.place_order(
+                            self.symbol,
+                            side,
+                            size,
+                            current_price
+                        )
+                        
+                        if order:
+                            # Update position
+                            self.positions[self.symbol] = position_size_btc
+                            
+                            # Update trade history
+                            self.trade_history.append(order)
+                            
+                            # Update portfolio data
+                            self._update_portfolio_after_trade(order, current_price)
+                            
+                            logger.info(f"Order executed: {side.upper()} {size:.6f} BTC @ {current_price:.2f}")
+                        else:
+                            logger.warning("Order failed for BTC/USD")
+                    else:
+                        logger.info("No trade needed for BTC/USD")
+                    
+                    # Update Redis with current portfolio data
+                    self._update_redis_portfolio_data()
+                        
+                    logger.info("\n=== Trading scan complete ===")
+                    
+                    # Sleep for trading interval
+                    interval = self.trading_settings.get('interval', 15)
+                    logger.info(f"Waiting {interval} seconds until next scan...")
+                    time.sleep(interval)
+                    
+                except Exception as e:
+                    logger.error("Error in trading loop: %s", str(e))
+                    time.sleep(1)  # Brief pause on error
+                    
         except Exception as e:
             logger.error("Error starting trading loop: %s", str(e))
             self.running = False
-            self.stop()
             raise
             
-    def _on_open(self, ws):
-        """Handle websocket connection open"""
+    def _update_portfolio_after_trade(self, order: Dict, current_price: float):
+        """Update portfolio data after a trade"""
         try:
-            # Subscribe to ticker for each symbol
-            for symbol in self.config['trading']['symbols']:
-                subscribe_msg = {
-                    "event": "subscribe",
-                    "pair": [symbol],
-                    "subscription": {
-                        "name": "ticker"
-                    }
-                }
-                ws.send(json.dumps(subscribe_msg))
+            # Calculate trade value - use 'size' field from order
+            trade_value = order['size'] * current_price
+            
+            # Update current balance (simplified - in reality you'd account for fees, slippage, etc.)
+            if order['side'] == 'buy':
+                self.current_balance -= trade_value
+            else:  # sell
+                self.current_balance += trade_value
                 
-            logger.info("Websocket connected and subscribed to symbols")
-            
-        except Exception as e:
-            logger.error("Error in websocket on_open: %s", str(e))
-            
-    def _on_message(self, ws, message):
-        """Handle incoming websocket message"""
-        try:
-            data = json.loads(message)
-            
-            # Handle ticker data
-            if isinstance(data, list) and len(data) > 1:
-                ticker_data = data[1]
-                if isinstance(ticker_data, dict):
-                    # Extract price data
-                    price_data = {
-                        'symbol': data[3],
-                        'price': float(ticker_data['c'][0]),
-                        'timestamp': int(time.time() * 1000)
-                    }
-                    
-                    # Update data processor
-                    self._handle_market_data(price_data)
-                    
-        except Exception as e:
-            logger.error("Error in websocket on_message: %s", str(e))
-            
-    def _on_error(self, ws, error):
-        """Handle websocket error"""
-        logger.error("Websocket error: %s", str(error))
-        
-    def _on_close(self, ws, close_status_code, close_msg):
-        """Handle websocket connection close"""
-        logger.info("Websocket connection closed")
-        
-    def _handle_market_data(self, data: Dict):
-        """Handle incoming market data"""
-        try:
-            # Extract symbol from data
-            symbol = data.get('symbol', self.config['trading']['symbols'][0])
-            
-            # Convert timestamp to datetime
-            try:
-                # Try to parse timestamp as milliseconds
-                timestamp = datetime.fromtimestamp(data['timestamp'] / 1000)
-            except (ValueError, TypeError):
-                # If that fails, try to parse as seconds
-                timestamp = datetime.fromtimestamp(data['timestamp'])
-            
-            # Round timestamp to nearest 15-second interval
-            rounded_timestamp = timestamp.replace(
-                second=(timestamp.second // 15) * 15,
-                microsecond=0
-            )
-            
-            # Update data processor
-            self.data_processor.update_price_data(
-                symbol,
-                data['price'],
-                timestamp
-            )
-            
-            # Store raw price data in Redis
-            self.redis_client.hset(
-                'market_data:raw',
-                timestamp.isoformat(),
-                json.dumps({
-                    'price': float(data['price']),
-                    'timestamp': timestamp.isoformat(),
-                    'symbol': symbol
-                })
-            )
-            
-            # For each timeframe, aggregate the raw data into OHLCV candles
-            for tf in self.config['trading']['timeframes']:
-                # Get existing candle data for this timeframe
-                tf_data = self.redis_client.hgetall(f'market_data:{tf}')
-                if tf_data:
-                    tf_data = {
-                        k.decode(): json.loads(v)
-                        for k, v in tf_data.items()
-                    }
-                else:
-                    tf_data = {}
-                    
-                # Get or create candle for current interval
-                candle_key = rounded_timestamp.isoformat()
-                if candle_key not in tf_data:
-                    tf_data[candle_key] = {
-                        'open': float(data['price']),
-                        'high': float(data['price']),
-                        'low': float(data['price']),
-                        'close': float(data['price']),
-                        'volume': float(data.get('volume', 0)),
-                        'timestamp': candle_key,
-                        'symbol': symbol
-                    }
-                else:
-                    # Update existing candle
-                    candle = tf_data[candle_key]
-                    candle['high'] = max(candle['high'], float(data['price']))
-                    candle['low'] = min(candle['low'], float(data['price']))
-                    candle['close'] = float(data['price'])
-                    candle['volume'] += float(data.get('volume', 0))
-                    
-                # Store updated candle in Redis
-                self.redis_client.hset(
-                    f'market_data:{tf}',
-                    candle_key,
-                    json.dumps(tf_data[candle_key])
-                )
-            
-        except Exception as e:
-            logger.error("Error handling market data: %s", str(e))
-            logger.debug("Market data: %s", data)  # Log the data for debugging
-            
-    def _timeframe_loop(self):
-        """Background thread for processing timeframes"""
-        logger.info("Starting timeframe processing loop")
-        while self.running:
-            try:
-                logger.debug("Processing timeframes...")
-                self._process_timeframes()
-                time.sleep(15)  # Process every 15 seconds
-            except Exception as e:
-                logger.error("Error in timeframe loop: %s", str(e))
-                time.sleep(1)  # Wait a bit before retrying
-                
-    def _process_timeframes(self):
-        """Process all timeframes and indicators"""
-        try:
-            # Get data for all timeframes
-            timeframes = self.config['trading']['timeframes']
-            data = {}
-            
-            for tf in timeframes:
-                # Get data from Redis
-                tf_data = self.redis_client.hgetall(f'market_data:{tf}')
-                logger.debug(f"Raw Redis data for {tf}: {tf_data}")
-                if tf_data:
-                    # Convert to DataFrame with proper index
-                    df_data = []
-                    for k, v in tf_data.items():
-                        row = json.loads(v)
-                        df_data.append({
-                            'timestamp': pd.to_datetime(row['timestamp']),
-                            'open': float(row['open']),
-                            'high': float(row['high']),
-                            'low': float(row['low']),
-                            'close': float(row['close']),
-                            'volume': float(row['volume'])
-                        })
-                    if df_data:
-                        df = pd.DataFrame(df_data)
-                        df.set_index('timestamp', inplace=True)
-                        df.sort_index(inplace=True)
-                        data[tf] = df
-                    else:
-                        logger.error(f"No valid OHLCV data for timeframe {tf}, skipping.")
-                        
-            # Process indicators for each timeframe
-            for tf, df in data.items():
-                if len(df) > 0:
-                    try:
-                        # Process indicators
-                        result = process_chunk(df, 0, len(df))
-                        
-                        # Handle tuple output (processed_df, errors)
-                        if isinstance(result, tuple) and len(result) == 2:
-                            processed_df, errors = result
-                            
-                            # Log any errors
-                            if errors:
-                                for error in errors:
-                                    logger.error("Error processing indicators: %s", error)
-                            
-                            # Process the DataFrame if it exists
-                            if isinstance(processed_df, pd.DataFrame) and not processed_df.empty:
-                                # Ensure unique column names
-                                processed_df.columns = [f"{col}_{i}" if processed_df.columns.tolist().count(col) > 1 
-                                                     else col for i, col in enumerate(processed_df.columns)]
-                                
-                                # Store processed data in Redis
-                                processed_data = processed_df.to_dict(orient='index')
-                                for timestamp, row in processed_data.items():
-                                    self.redis_client.hset(
-                                        f'processed_data:{tf}',
-                                        timestamp.isoformat(),
-                                        json.dumps(row)
-                                    )
-                                
-                                # Log successful processing
-                                logger.info(f"Processed {len(processed_df)} rows for {tf} timeframe")
-                                
-                                # Print model labels for 15s timeframe
-                                if tf == '15s':
-                                    logger.info("=== Model Labels for 15s Candle ===")
-                                    logger.info("Price: %.2f", df['close'].iloc[-1])
-                                    
-                                    # Get signals
-                                    signals = self.data_processor.get_signals(tf)
-                                    if signals:
-                                        logger.info("Signals: %s", json.dumps(signals, indent=2))
-                                    
-                                    # Check positions
-                                    positions = self.paper_trader.get_positions()
-                                    if positions:
-                                        logger.info("=== Risk Model Response ===")
-                                        for symbol, position in positions.items():
-                                            # Get risk metrics
-                                            risk_metrics = self.risk_manager.get_risk_metrics()
-                                            logger.info("Position: %s", json.dumps(position, indent=2))
-                                            logger.info("Risk Metrics: %s", json.dumps(risk_metrics, indent=2))
-                                            
-                                            # Get portfolio analytics
-                                            portfolio_metrics = self.portfolio_analytics.calculate_portfolio_metrics(
-                                                positions,
-                                                self.paper_trader.get_trade_history(),
-                                                self.data_processor.get_price_data(symbol)
-                                            )
-                                            logger.info("Portfolio Metrics: %s", json.dumps(portfolio_metrics, indent=2))
-                                    
-                                    logger.info("=== End of 15s Update ===")
-                            else:
-                                logger.error(f"Invalid or empty processed DataFrame for timeframe {tf}")
-                        else:
-                            logger.error(f"Unexpected process_chunk return type: {type(result)}")
-                            
-                    except Exception as e:
-                        logger.error("Error processing timeframe %s: %s", tf, str(e))
-                        logger.debug("DataFrame shape: %s", df.shape)
-                        logger.debug("DataFrame columns: %s", df.columns.tolist())
-                    
-        except Exception as e:
-            logger.error("Error processing timeframes: %s", str(e))
-            logger.debug("Data: %s", data)  # Log the data for debugging
-            
-    def _monitoring_loop(self):
-        """Background thread for monitoring"""
-        while self.running:
-            try:
-                self._update_monitoring()
-                time.sleep(self.config['monitoring']['metrics_interval'])
-            except Exception as e:
-                logger.error("Error in monitoring loop: %s", str(e))
-                
-    def _update_monitoring(self):
-        """Update monitoring system with latest metrics"""
-        try:
-            # Get current metrics
-            metrics = self.portfolio_analytics.calculate_portfolio_metrics(
-                self.paper_trader.get_positions(),
-                self.paper_trader.get_trade_history(),
-                self.data_processor.get_price_data(self.config['trading']['symbols'][0])
-            )
-            
-            # Log metrics
-            self.monitoring.log_metrics(metrics)
-            
-            # Check risk limits
-            if not self.monitoring.check_risk_limits(metrics):
-                logger.warning("Risk limits exceeded, pausing trading")
-                self.paused = True
-            else:
-                self.paused = False
+            # Update PnL
+            if order.get('pnl'):
+                self.total_pnl += order['pnl']
+                self.daily_pnl += order['pnl']
                 
         except Exception as e:
-            logger.error("Error updating monitoring: %s", str(e))
+            logger.error("Error updating portfolio after trade: %s", str(e))
+            
+    def _update_redis_portfolio_data(self):
+        """Update Redis with current portfolio data"""
+        try:
+            # Calculate portfolio value (current balance + position value)
+            current_position = self.positions.get(self.symbol, 0.0)
+            position_value = 0.0
+            
+            if current_position != 0:
+                # Get current price for position valuation
+                price_data = self.data_processor.get_price_data(self.symbol)
+                if price_data:
+                    current_price = price_data[-1]['close']
+                    position_value = current_position * current_price
+            
+            portfolio_value = self.current_balance + position_value
+            
+            # Get true trade history (round-trips with realized PnL)
+            trade_history = self.order_manager.get_trade_history()[-50:]
+            
+            # Store essential portfolio data in Redis
+            portfolio_data = {
+                'portfolio_value': portfolio_value,
+                'account_balance': self.current_balance,
+                'total_pnl': self.total_pnl,
+                'daily_pnl': self.daily_pnl,
+                'positions': self.positions,
+                'trade_history': trade_history,  # Only round-trip trades
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Store each key separately for easy access
+            self.redis_client.set('portfolio_value', portfolio_value)
+            self.redis_client.set('account_balance', self.current_balance)
+            self.redis_client.set('total_pnl', self.total_pnl)
+            self.redis_client.set('daily_pnl', self.daily_pnl)
+            self.redis_client.set('positions', json.dumps(self.positions))
+            self.redis_client.set('trade_history', json.dumps(trade_history))
+            self.redis_client.set('last_update', datetime.now().isoformat())
+            
+            # Store complete portfolio data
+            self.redis_client.set('portfolio_data', json.dumps(portfolio_data))
+            
+        except Exception as e:
+            logger.error("Error updating Redis portfolio data: %s", str(e))
             
     def stop(self):
         """Stop the trading loop"""
@@ -403,23 +269,24 @@ class TradingLoop:
             return
             
         try:
-            # Set running flag to False
             self.running = False
-            
-            # Close websocket
-            if self.ws:
-                self.ws.close()
-                
-            # Wait for threads to finish
-            if hasattr(self, 'ws_thread'):
-                self.ws_thread.join(timeout=5)
-            if hasattr(self, 'monitoring_thread'):
-                self.monitoring_thread.join(timeout=5)
-            if hasattr(self, 'timeframe_thread'):
-                self.timeframe_thread.join(timeout=5)
-                
             logger.info("Trading loop stopped")
-            
         except Exception as e:
             logger.error("Error stopping trading loop: %s", str(e))
-            raise 
+            raise
+            
+    def get_positions(self) -> Dict[str, float]:
+        """Get current positions
+        
+        Returns:
+            Dictionary of symbol to position size
+        """
+        return self.positions.copy()
+        
+    def get_trade_history(self) -> List[Dict]:
+        """Get trade history
+        
+        Returns:
+            List of trade dictionaries
+        """
+        return self.trade_history.copy() 
