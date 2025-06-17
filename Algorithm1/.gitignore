@@ -1,0 +1,93 @@
+# === Python & Jupyter ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.ipynb_checkpoints/
+
+# === Virtual Environments ===
+venv/
+.env/
+.envrc
+.venv/
+
+# === IDEs & Editors ===
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+.DS_Store
+*.swp
+*.bak
+*.tmp
+
+# === Logs & Outputs ===
+logs/
+*.log
+*.out
+*.err
+
+# === Data Files ===
+# Raw, processed, features, and market data
+raw_data/
+processed_data/
+features/
+*.csv
+*.parquet
+*.h5
+*.hdf5
+*.feather
+*.xlsx
+*.xls
+*.jsonl
+*.zip
+*.tar.gz
+*.pkl
+*.joblib
+
+# === Model Files & Artefacts ===
+models/
+artefacts/
+checkpoints/
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.pb
+*.tflite
+*.h5
+*.model
+*.weights
+
+# === Results & Reports ===
+results/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+*.html
+*.md
+
+# === Experiment Tracking ===
+wandb/
+tensorboard/
+mlruns/
+
+# === System Files ===
+Thumbs.db
+Desktop.ini
+
+# === Miscellaneous ===
+*.cache
+*.coverage
+*.egg-info/
+.eggs/
+*.manifest
+*.spec
+
+# === Configs (if sensitive) ===
+# Uncomment if you want to ignore local configs
+# config.yaml
+# config.yml 
