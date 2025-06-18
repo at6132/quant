@@ -14,7 +14,7 @@ An advanced quantitative trading system that learns trading intuition from Smart
 ## 📋 Prerequisites
 
 - Python 3.10+
-- NVIDIA GPU with 8GB+ VRAM (RTX 5070 recommended)
+- NVIDIA GPU with 8GB+ VRAM (RTX 5070+ recommended)
 - Windows 10/11 or Linux
 - Git
 
@@ -42,7 +42,6 @@ source venv/bin/activate
 ### 3. Install Dependencies
 
 ```bash
-cd Algorithm1
 pip install -r requirements.txt
 ```
 
@@ -75,7 +74,6 @@ python trainmodel.py --symbol BTCUSDT --days 730
 ### Multi-Symbol Training
 
 ```bash
-# Train on multiple crypto pairs for better generalization
 python trainmodel.py --symbol BTCUSDT --days 365
 python trainmodel.py --symbol ETHUSDT --days 365
 python trainmodel.py --symbol SOLUSDT --days 365
@@ -98,8 +96,6 @@ Options:
 ### Supported Symbols
 
 - **Crypto**: BTCUSDT, ETHUSDT, SOLUSDT, ADAUSDT, DOTUSDT, LINKUSDT
-- **Stocks**: AAPL, GOOGL, MSFT, TSLA, AMZN, META
-- **Forex**: EURUSD, GBPUSD, USDJPY, AUDUSD
 
 ### Training Duration Guide
 
@@ -205,4 +201,4 @@ For issues and questions:
 
 ## 📄 License
 
-This project is for educational purposes only. Use at your own risk.
+This project is for educational purposes only. Use at your own risk. Licensed under JT Captial LLC
