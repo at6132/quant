@@ -367,9 +367,10 @@ class CompleteSystemTest:
             }
             
             entry_analysis = await self.system.entry_analyzer.analyze_entry(
+                self.system.market_data,
                 test_predictions,
-                test_context,
-                self.system.market_data
+                {},
+                test_context
             )
             
             if entry_analysis:

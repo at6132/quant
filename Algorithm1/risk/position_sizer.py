@@ -64,6 +64,10 @@ class PositionSizer:
         
         self.logger.info("Position Sizer initialized successfully")
     
+    async def initialize(self):
+        """Initialize the position sizer (no-op for compatibility)"""
+        pass
+    
     async def calculate_position_size(
         self,
         symbol: str,

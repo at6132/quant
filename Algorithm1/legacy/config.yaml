@@ -69,28 +69,42 @@ features:
     - month
     - quarter
 
-# Model parameters - Using only TFT for better sequence modeling
+# Model parameters - Optimized for long-term training (1-2 years)
 models:
   tft:
-    learning_rate: 0.0001  # Reduced learning rate
-    hidden_size: 256      # Increased hidden size
-    attention_head_size: 8
-    dropout: 0.2
-    hidden_continuous_size: 128
-    max_epochs: 200       # Increased epochs
-    batch_size: 1024      # Increased batch size
-    encoder_length: 200   # Increased encoder length
-    validation_size: 5000 # Increased validation size
+    learning_rate: 0.0001  # Lower learning rate for stability
+    hidden_size: 512      # Larger model for complex patterns
+    attention_head_size: 16  # More attention heads
+    dropout: 0.3          # Higher dropout for regularization
+    hidden_continuous_size: 256
+    max_epochs: 500       # More epochs for complex data
+    batch_size: 2048      # Large batch size for 5070
+    encoder_length: 300   # Longer sequence for better context
+    validation_size: 10000 # More validation data
     params:
       loss: "quantile"
     train:
-      max_epochs: 200
-      batch_size: 1024
-      validation_size: 5000
+      max_epochs: 500
+      batch_size: 2048
+      validation_size: 10000
       random_state: 42
-      patience: 10        # Early stopping patience
+      patience: 25        # More patience for complex training
       gradient_clip_val: 0.1
-      accumulate_grad_batches: 4
+      accumulate_grad_batches: 1  # No accumulation needed with large batch
+      precision: 16       # Mixed precision
+      accelerator: "gpu"
+      devices: 1
+      strategy: "auto"
+      # Learning rate scheduling
+      lr_scheduler: "cosine"
+      lr_scheduler_params:
+        warmup_epochs: 10
+        min_lr: 1e-6
+      # Advanced training features
+      gradient_clip_algorithm: "norm"
+      deterministic: false
+      enable_progress_bar: true
+      log_every_n_steps: 50
 
 # Backtesting parameters
 backtesting:

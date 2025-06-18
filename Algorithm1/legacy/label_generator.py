@@ -17,6 +17,10 @@ class LabelGenerator:
         self.stop_loss = config['labeling']['stop_loss']
         self.take_profit = config['labeling']['take_profit']
 
+    async def initialize(self):
+        """Initialize the label generator (no-op for compatibility)"""
+        pass
+
     def generate_labels(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Generate trading labels based on future returns with improved signal generation
@@ -206,4 +210,91 @@ class LabelGenerator:
                      for i, col in enumerate(df.columns)]
         
         logger.info(f"Generated multi-class labels. Distribution: {df['multi_class_label'].value_counts().to_dict()}")
+        return df 
+
+    def generate_intuition_labels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate multi-dimensional intuition labels for advanced trading decisions.
+        Creates 10 different labels that match our intuition model outputs.
+        """
+        logger.info("Generating intuition-based multi-dimensional labels...")
+        
+        # Calculate key metrics
+        future_returns = df['close'].shift(-self.lookforward) / df['close'] - 1
+        volatility = df['close'].rolling(window=20).std() / df['close']
+        momentum = df['close'].pct_change(10)
+        volume_ratio = df['volume'] / df['volume'].rolling(20).mean()
+        
+        # Initialize all label columns
+        labels = {}
+        
+        # 1. Entry probability (0-1): How likely is a profitable trade?
+        labels['entry_probability'] = np.where(
+            np.abs(future_returns) > self.threshold,
+            np.clip(np.abs(future_returns) / (self.threshold * 2), 0, 1),
+            0.0
+        )
+        
+        # 2. Entry direction (-1, 0, 1): Long, short, or no trade
+        labels['entry_direction'] = np.where(
+            future_returns > self.threshold, 1.0,
+            np.where(future_returns < -self.threshold, -1.0, 0.0)
+        )
+        
+        # 3. Entry confidence (0-1): Confidence in the signal
+        labels['entry_confidence'] = np.clip(
+            np.abs(future_returns) / (self.threshold * 1.5) * 
+            (1 + volume_ratio) / 2, 0, 1
+        )
+        
+        # 4. Position size multiplier (0-1): Risk sizing based on confidence
+        labels['position_size_multiplier'] = np.clip(
+            labels['entry_confidence'] * (1 - volatility), 0, 1
+        )
+        
+        # 5. Take profit distance (0-1): Distance to take profit
+        labels['tp_distance'] = np.clip(
+            np.abs(future_returns) * 0.8, 0, 1
+        )
+        
+        # 6. Stop loss distance (0-1): Distance to stop loss
+        labels['sl_distance'] = np.clip(
+            volatility * 2, 0, 1
+        )
+        
+        # 7. Trail aggressiveness (0-1): How aggressively to trail
+        labels['trail_aggressiveness'] = np.clip(
+            momentum * 10, 0, 1
+        )
+        
+        # 8. Hold duration (0-1): How long to hold (normalized)
+        labels['hold_duration'] = np.clip(
+            np.abs(future_returns) / (self.threshold * 3), 0, 1
+        )
+        
+        # 9. Exit probability (0-1): Probability of exit
+        labels['exit_probability'] = np.where(
+            np.abs(future_returns) < self.threshold * 0.5,
+            0.8,  # High exit probability if small move expected
+            0.2   # Low exit probability if big move expected
+        )
+        
+        # 10. Exit urgency (0-1): How urgently to exit
+        labels['exit_urgency'] = np.clip(
+            volatility * 3, 0, 1
+        )
+        
+        # Add all labels to DataFrame
+        for label_name, label_values in labels.items():
+            df[f'intuition_{label_name}'] = label_values
+        
+        # Create combined label for backward compatibility
+        df['intuition_label'] = labels['entry_direction']
+        
+        # Drop rows with NaN values
+        df = df.dropna()
+        
+        logger.info(f"Generated intuition labels with {len(df)} samples")
+        logger.info(f"Entry direction distribution: {df['intuition_entry_direction'].value_counts().to_dict()}")
+        
         return df 

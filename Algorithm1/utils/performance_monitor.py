@@ -5,6 +5,7 @@ Implements real-time metrics tracking, alert system, and performance reporting
 
 import asyncio
 import logging
+import time
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 import numpy as np
@@ -87,7 +88,29 @@ class PerformanceMonitor:
         self.peak_balance = 0.0
         self.current_balance = 0.0
         
+        # Training timing
+        self.training_start_time = None
+        self.training_end_time = None
+        
         self.logger.info("Performance Monitor initialized successfully")
+    
+    def start(self):
+        """Start timing for training or other operations"""
+        self.training_start_time = time.time()
+        self.logger.info("Performance monitor timing started")
+    
+    def stop(self):
+        """Stop timing for training or other operations"""
+        self.training_end_time = time.time()
+        self.logger.info("Performance monitor timing stopped")
+    
+    def get_elapsed_time(self) -> float:
+        """Get elapsed time since start() was called"""
+        if self.training_start_time is None:
+            return 0.0
+        if self.training_end_time is not None:
+            return self.training_end_time - self.training_start_time
+        return time.time() - self.training_start_time
     
     async def update_metrics(
         self,
